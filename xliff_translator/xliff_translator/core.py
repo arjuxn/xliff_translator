@@ -11,49 +11,21 @@ XLIFF_NAMESPACE = "urn:oasis:names:tc:xliff:document:1.2"
 
 
 @dataclass
-class TextLocation:
-    """
-    Points to one actual text node inside an XML tree.
-
-    XML text can live in two places:
-
-        element.text
-
-    or:
-
-        child.tail
-    """
-
-    index: int
-    element: etree._Element
-    attribute: str
-
-    @property
-    def text(self) -> str | None:
-        return getattr(
-            self.element,
-            self.attribute,
-        )
-
-    @text.setter
-    def text(self, value: str):
-        setattr(
-            self.element,
-            self.attribute,
-            value,
-        )
-
-
-@dataclass
 class TranslationTask:
     """
-    One text node that will be sent to NLLB.
+    One text location that should be sent to the translator.
 
-    The XML element itself is never sent to NLLB.
+    unit_index:
+        Position of the trans-unit in the XLIFF document.
+
+    location_index:
+        Position of the text location inside that trans-unit's source.
+
+    text:
+        Actual text sent to NLLB.
     """
 
     unit_index: int
-    unit_id: str
     location_index: int
     text: str
 
@@ -63,6 +35,9 @@ def parse_xliff(
 ) -> etree._ElementTree:
     """
     Parse an XLIFF file while preserving XML structure.
+
+    Blank text, comments, CDATA, and processing instructions are
+    intentionally preserved.
     """
 
     parser = etree.XMLParser(
@@ -75,32 +50,6 @@ def parse_xliff(
     return etree.parse(
         str(path),
         parser,
-    )
-
-
-def write_xliff(
-    tree: etree._ElementTree,
-    path: str | Path,
-) -> None:
-    """
-    Write the translated XLIFF back to disk.
-
-    XML indentation already present in the tree is preserved
-    because pretty_print is disabled.
-    """
-
-    path = Path(path)
-
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    tree.write(
-        str(path),
-        encoding="UTF-8",
-        xml_declaration=True,
-        pretty_print=False,
     )
 
 
@@ -133,15 +82,11 @@ def find_source(
     trans_unit: etree._Element,
 ) -> etree._Element | None:
     """
-    Find the direct <source> child.
+    Find the <source> element directly inside a trans-unit.
     """
 
     for child in trans_unit:
-        if (
-            isinstance(child.tag, str)
-            and etree.QName(child).localname
-            == "source"
-        ):
+        if etree.QName(child).localname == "source":
             return child
 
     return None
@@ -151,157 +96,14 @@ def find_target(
     trans_unit: etree._Element,
 ) -> etree._Element | None:
     """
-    Find the direct <target> child.
+    Find the <target> element directly inside a trans-unit.
     """
 
     for child in trans_unit:
-        if (
-            isinstance(child.tag, str)
-            and etree.QName(child).localname
-            == "target"
-        ):
+        if etree.QName(child).localname == "target":
             return child
 
     return None
-
-
-def iter_text_locations(
-    element: etree._Element,
-) -> list[TextLocation]:
-    """
-    Find every meaningful text node in document order.
-
-    This captures both:
-
-        element.text
-
-    and:
-
-        child.tail
-
-    Example:
-
-        <source>
-            Hello <g>world</g> again
-        </source>
-
-    gives:
-
-        source.text -> "Hello "
-        g.text      -> "world"
-        g.tail      -> " again"
-
-    Whitespace-only formatting nodes are ignored.
-    """
-
-    locations: list[TextLocation] = []
-
-    def walk(
-        node: etree._Element,
-    ) -> None:
-        if (
-            node.text is not None
-            and node.text.strip()
-        ):
-            locations.append(
-                TextLocation(
-                    index=len(locations),
-                    element=node,
-                    attribute="text",
-                )
-            )
-
-        for child in node:
-            walk(child)
-
-            if (
-                child.tail is not None
-                and child.tail.strip()
-            ):
-                locations.append(
-                    TextLocation(
-                        index=len(locations),
-                        element=child,
-                        attribute="tail",
-                    )
-                )
-
-    walk(element)
-
-    return locations
-
-
-def preserve_whitespace(
-    translated: str,
-    original: str,
-) -> str:
-    """
-    Preserve the original text node's leading and
-    trailing whitespace.
-
-    Only the meaningful text is replaced.
-    """
-
-    if not original:
-        return translated
-
-    leading_length = (
-        len(original)
-        - len(original.lstrip())
-    )
-
-    trailing_start = len(
-        original.rstrip()
-    )
-
-    leading = original[
-        :leading_length
-    ]
-
-    trailing = original[
-        trailing_start:
-    ]
-
-    return (
-        leading
-        + translated.strip()
-        + trailing
-    )
-
-
-def clone_source(
-    source: etree._Element,
-) -> etree._Element:
-    """
-    Deep-copy <source> and turn the copy into <target>.
-
-    Every nested element, attribute, text node,
-    tail, namespace and child relationship is preserved.
-    """
-
-    cloned = deepcopy(source)
-
-    if not isinstance(
-        cloned.tag,
-        str,
-    ):
-        raise ValueError(
-            "Source element has an invalid XML tag."
-        )
-
-    if cloned.tag.startswith("{"):
-        namespace = cloned.tag.split(
-            "}",
-            1,
-        )[0] + "}"
-
-        cloned.tag = (
-            f"{namespace}target"
-        )
-    else:
-        cloned.tag = "target"
-
-    return cloned
 
 
 def replace_or_add_target(
@@ -309,10 +111,11 @@ def replace_or_add_target(
     target_content: etree._Element,
 ) -> etree._Element:
     """
-    Replace an existing target or create one.
+    Replace an existing <target>, or create a new <target>.
 
-    The supplied target_content is already a deep
-    translated clone of source.
+    target_content is already a reconstructed target element.
+
+    The original <source> is never modified.
     """
 
     old_target = find_target(
@@ -324,20 +127,19 @@ def replace_or_add_target(
             old_target
         )
 
-        target = deepcopy(
-            target_content
+        target = etree.Element(
+            old_target.tag,
+            attrib=dict(
+                old_target.attrib
+            ),
+            nsmap=old_target.nsmap,
         )
 
-        # Keep the original target tag/namespace.
-        target.tag = old_target.tag
+        target.text = target_content.text
 
-        # Keep the original target attributes.
-        target.attrib.clear()
-
-        for key, value in old_target.attrib.items():
-            target.set(
-                key,
-                value,
+        for child in target_content:
+            target.append(
+                deepcopy(child)
             )
 
         trans_unit.remove(
@@ -357,17 +159,39 @@ def replace_or_add_target(
 
     if source is None:
         raise ValueError(
-            f"trans-unit "
-            f"{get_unit_id(trans_unit)!r} "
+            f"trans-unit {get_unit_id(trans_unit)} "
             "has no source."
+        )
+
+    if source.tag.startswith("{"):
+        namespace = (
+            source.tag.split(
+                "}",
+                1,
+            )[0]
+            + "}"
+        )
+
+        target_tag = (
+            f"{namespace}target"
+        )
+    else:
+        target_tag = "target"
+
+    target = etree.Element(
+        target_tag,
+        nsmap=source.nsmap,
+    )
+
+    target.text = target_content.text
+
+    for child in target_content:
+        target.append(
+            deepcopy(child)
         )
 
     source_index = trans_unit.index(
         source
-    )
-
-    target = deepcopy(
-        target_content
     )
 
     trans_unit.insert(
@@ -378,47 +202,225 @@ def replace_or_add_target(
     return target
 
 
-def build_translation_tasks(
-    tree: etree._ElementTree,
-) -> list[TranslationTask]:
+def inspect_xliff(
+    path: str | Path,
+) -> list[str]:
     """
-    Extract all meaningful text nodes from all
-    trans-units.
-
-    These are the ONLY strings that will be sent
-    to NLLB.
+    Produce a human-readable inspection of an XLIFF file.
     """
 
-    tasks: list[TranslationTask] = []
+    tree = parse_xliff(
+        path
+    )
 
-    units = find_trans_units(tree)
+    units = find_trans_units(
+        tree
+    )
 
-    for unit_index, unit in enumerate(units):
-        source = find_source(unit)
+    lines: list[str] = []
+
+    lines.append(
+        f"XLIFF: {Path(path).name}"
+    )
+
+    lines.append(
+        f"trans-units: {len(units)}"
+    )
+
+    lines.append("")
+
+    for index, unit in enumerate(
+        units
+    ):
+        lines.append(
+            f"[{index}] id={get_unit_id(unit)}"
+        )
+
+        source = find_source(
+            unit
+        )
 
         if source is None:
-            continue
+            lines.append(
+                "  source: MISSING"
+            )
 
-        unit_id = get_unit_id(unit)
+            lines.append("")
+            continue
 
         locations = iter_text_locations(
             source
         )
 
-        for location in locations:
+        if not locations:
+            lines.append(
+                "  (markup-only / empty)"
+            )
+
+            lines.append("")
+            continue
+
+        for leaf_index, location in enumerate(
+            locations
+        ):
             text = location.text
 
             if text is None:
-                continue
+                text = ""
 
-            if not text.strip():
-                continue
+            text = text.replace(
+                "\n",
+                "\\n",
+            )
+
+            lines.append(
+                f"  leaf {leaf_index}: {text!r}"
+            )
+
+        lines.append("")
+
+    return lines
+
+
+class TextLocation:
+    """
+    Points to exactly one text location in an XML tree.
+
+    The text can be either:
+
+        element.text
+
+    or:
+
+        child.tail
+    """
+
+    def __init__(
+        self,
+        element: etree._Element,
+        attribute: str,
+    ):
+        self.element = element
+        self.attribute = attribute
+
+    @property
+    def text(
+        self,
+    ) -> str | None:
+        return getattr(
+            self.element,
+            self.attribute,
+        )
+
+    @text.setter
+    def text(
+        self,
+        value: str,
+    ):
+        setattr(
+            self.element,
+            self.attribute,
+            value,
+        )
+
+
+def iter_text_locations(
+    element: etree._Element,
+) -> list[TextLocation]:
+    """
+    Walk an XML subtree and return every text location.
+
+    XML text can exist in two important places:
+
+        <g>Hello</g>
+            ^ element.text
+
+    and:
+
+        <g>Hello</g> world
+                     ^ child.tail
+
+    Both are collected.
+
+    Nested elements are recursively traversed.
+    """
+
+    locations: list[TextLocation] = []
+
+    def walk(
+        node: etree._Element,
+    ):
+        if node.text:
+            locations.append(
+                TextLocation(
+                    element=node,
+                    attribute="text",
+                )
+            )
+
+        for child in node:
+            walk(
+                child
+            )
+
+            if child.tail:
+                locations.append(
+                    TextLocation(
+                        element=child,
+                        attribute="tail",
+                    )
+                )
+
+    walk(
+        element
+    )
+
+    return locations
+
+
+def build_translation_tasks(
+    tree: etree._ElementTree,
+) -> list[TranslationTask]:
+    """
+    Create translation tasks from all source text locations.
+
+    Only actual text nodes are returned.
+
+    XML elements themselves are never sent to NLLB.
+    """
+
+    tasks: list[TranslationTask] = []
+
+    units = find_trans_units(
+        tree
+    )
+
+    for unit_index, unit in enumerate(
+        units
+    ):
+        source = find_source(
+            unit
+        )
+
+        if source is None:
+            continue
+
+        locations = iter_text_locations(
+            source
+        )
+
+        for location_index, location in enumerate(
+            locations
+        ):
+            text = location.text
+
+            if text is None:
+                text = ""
 
             tasks.append(
                 TranslationTask(
                     unit_index=unit_index,
-                    unit_id=unit_id,
-                    location_index=location.index,
+                    location_index=location_index,
                     text=text,
                 )
             )
@@ -426,66 +428,38 @@ def build_translation_tasks(
     return tasks
 
 
-def build_translation_target(
+def clone_source(
     source: etree._Element,
-    translated_segments: list[str],
 ) -> etree._Element:
     """
-    Clone source and put translated text into the
-    exact same text locations.
+    Make a completely independent copy of <source>.
 
-    No XML structure is reconstructed from NLLB output.
+    The clone becomes <target>.
+
+    All nested elements and attributes are preserved.
     """
 
-    target = clone_source(
+    cloned = deepcopy(
         source
     )
 
-    source_locations = (
-        iter_text_locations(
-            source
-        )
-    )
-
-    target_locations = (
-        iter_text_locations(
-            target
-        )
-    )
-
-    if len(source_locations) != len(
-        target_locations
-    ):
-        raise ValueError(
-            "Source and target have different "
-            "numbers of text locations."
+    if cloned.tag.startswith("{"):
+        namespace = (
+            cloned.tag.split(
+                "}",
+                1,
+            )[0]
+            + "}"
         )
 
-    if len(translated_segments) != len(
-        target_locations
-    ):
-        raise ValueError(
-            "Number of translations does not "
-            "match number of text locations."
+        cloned.tag = (
+            f"{namespace}target"
         )
 
-    for (
-        source_location,
-        target_location,
-        translated,
-    ) in zip(
-        source_locations,
-        target_locations,
-        translated_segments,
-    ):
-        target_location.text = (
-            preserve_whitespace(
-                translated,
-                source_location.text or "",
-            )
-        )
+    else:
+        cloned.tag = "target"
 
-    return target
+    return cloned
 
 
 def apply_leaf_translations(
@@ -494,22 +468,20 @@ def apply_leaf_translations(
     translated_segments: list[str],
 ) -> None:
     """
-    Replace text locations in an existing target.
+    Replace text locations in target with translated
+    segments.
 
-    XML elements themselves are never removed,
-    reordered or recreated.
+    The XML structure is never reconstructed here.
+
+    Only .text and .tail values are changed.
     """
 
-    source_locations = (
-        iter_text_locations(
-            source
-        )
+    source_locations = iter_text_locations(
+        source
     )
 
-    target_locations = (
-        iter_text_locations(
-            target
-        )
+    target_locations = iter_text_locations(
+        target
     )
 
     if len(source_locations) != len(
@@ -528,21 +500,41 @@ def apply_leaf_translations(
             "not match number of text locations."
         )
 
-    for (
-        source_location,
-        target_location,
-        translation,
-    ) in zip(
-        source_locations,
+    for location, translation in zip(
         target_locations,
         translated_segments,
     ):
-        target_location.text = (
-            preserve_whitespace(
-                translation,
-                source_location.text or "",
-            )
-        )
+        location.text = translation
+
+
+def build_translation_target(
+    source: etree._Element,
+    translated_segments: list[str],
+) -> etree._Element:
+    """
+    Build a translated <target> from a <source>.
+
+    The source is deep-copied first.
+
+    The copy is renamed from <source> to <target>.
+
+    Only text locations are replaced.
+
+    All XML structure, nested elements, attributes,
+    namespaces, and inline elements are preserved.
+    """
+
+    target = clone_source(
+        source
+    )
+
+    apply_leaf_translations(
+        target=target,
+        source=source,
+        translated_segments=translated_segments,
+    )
+
+    return target
 
 
 def validate_translation_tree(
@@ -550,8 +542,10 @@ def validate_translation_tree(
     translated_tree: etree._ElementTree,
 ) -> None:
     """
-    Verify that translation did not change the
-    XLIFF structural skeleton.
+    Validate that the translated XLIFF retains
+    the same trans-unit structure.
+
+    The source must remain structurally identical.
     """
 
     original_units = find_trans_units(
@@ -624,146 +618,33 @@ def validate_translation_tree(
             for element in translated_source.iter()
         ]
 
-        if original_structure != (
-            translated_structure
-        ):
+        if original_structure != translated_structure:
             raise ValueError(
                 f"Source structure changed in "
                 f"trans-unit {original_id!r}"
             )
 
-        translated_target = find_target(
-            translated_unit
-        )
 
-        if translated_target is None:
-            raise ValueError(
-                f"Missing target in trans-unit "
-                f"{original_id!r}"
-            )
-
-        source_structure = [
-            (
-                element.tag,
-                dict(element.attrib),
-                len(element),
-            )
-            for element in original_source.iter()
-        ]
-
-        target_structure = [
-            (
-                element.tag,
-                dict(element.attrib),
-                len(element),
-            )
-            for element in translated_target.iter()
-        ]
-
-        # target has the same hierarchy as source,
-        # except for source -> target itself.
-        if len(source_structure) != len(
-            target_structure
-        ):
-            raise ValueError(
-                f"Target structure changed in "
-                f"trans-unit {original_id!r}"
-            )
-
-        for (
-            source_info,
-            target_info,
-        ) in zip(
-            source_structure,
-            target_structure,
-        ):
-            source_tag = source_info[0]
-            target_tag = target_info[0]
-
-            source_local = etree.QName(
-                source_tag
-            ).localname
-
-            target_local = etree.QName(
-                target_tag
-            ).localname
-
-            if source_local == "source":
-                if target_local != "target":
-                    raise ValueError(
-                        f"Expected target element in "
-                        f"trans-unit {original_id!r}"
-                    )
-            elif source_info != target_info:
-                raise ValueError(
-                    f"Nested XML structure changed "
-                    f"in trans-unit {original_id!r}"
-                )
-
-
-def inspect_xliff(
+def write_xliff(
+    tree: etree._ElementTree,
     path: str | Path,
-) -> list[str]:
+) -> None:
     """
-    Produce a human-readable inspection.
+    Write an XLIFF tree to disk.
     """
 
-    tree = parse_xliff(path)
-
-    units = find_trans_units(tree)
-
-    lines: list[str] = []
-
-    lines.append(
-        f"XLIFF: {Path(path).name}"
+    path = Path(
+        path
     )
 
-    lines.append(
-        f"trans-units: {len(units)}"
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
-    lines.append("")
-
-    for index, unit in enumerate(units):
-        lines.append(
-            f"[{index}] id={get_unit_id(unit)}"
-        )
-
-        source = find_source(unit)
-
-        if source is None:
-            lines.append(
-                "  source: MISSING"
-            )
-            lines.append("")
-            continue
-
-        locations = iter_text_locations(
-            source
-        )
-
-        if not locations:
-            lines.append(
-                "  (markup-only / empty)"
-            )
-            lines.append("")
-            continue
-
-        for leaf_index, location in enumerate(
-            locations
-        ):
-            text = location.text or ""
-
-            text = text.replace(
-                "\n",
-                "\\n",
-            )
-
-            lines.append(
-                f"  leaf {leaf_index}: "
-                f"{text!r}"
-            )
-
-        lines.append("")
-
-    return lines
+    tree.write(
+        str(path),
+        encoding="UTF-8",
+        xml_declaration=True,
+        pretty_print=True,
+    )

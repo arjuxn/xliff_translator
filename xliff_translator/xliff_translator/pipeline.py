@@ -5,12 +5,12 @@ from pathlib import Path
 from tqdm import tqdm
 
 from .core import (
-    apply_leaf_translations,
     build_translation_target,
     build_translation_tasks,
     find_source,
     find_trans_units,
     get_unit_id,
+    iter_text_locations,
     parse_xliff,
     replace_or_add_target,
     validate_translation_tree,
@@ -31,18 +31,14 @@ def translate_file(
     Translate one XLIFF file into one output file
     for every requested target language.
 
-    Translation is performed on text nodes only.
+    Translation is performed on text locations only.
 
-    XML elements are never sent to NLLB.
+    XML elements are protected and are never sent
+    directly to NLLB.
     """
 
-    input_path = Path(
-        input_path
-    )
-
-    output_dir = Path(
-        output_dir
-    )
+    input_path = Path(input_path)
+    output_dir = Path(output_dir)
 
     output_dir.mkdir(
         parents=True,
@@ -59,6 +55,16 @@ def translate_file(
         )
         print("=" * 60)
 
+        # --------------------------------------------------
+        # Parse two independent copies.
+        #
+        # original_tree:
+        #     Never modified.
+        #
+        # working_tree:
+        #     Receives translated targets.
+        # --------------------------------------------------
+
         original_tree = parse_xliff(
             input_path
         )
@@ -66,6 +72,18 @@ def translate_file(
         working_tree = parse_xliff(
             input_path
         )
+
+        # --------------------------------------------------
+        # Build translation tasks from SOURCE text.
+        #
+        # Each task identifies:
+        #
+        #     unit_index
+        #     location_index
+        #     text
+        #
+        # XML structure is not sent to NLLB.
+        # --------------------------------------------------
 
         tasks = build_translation_tasks(
             original_tree
@@ -183,14 +201,12 @@ def translate_file(
         )
 
         for unit_index, unit in progress_units:
-            source = find_source(unit)
+            source = find_source(
+                unit
+            )
 
             if source is None:
                 continue
-
-            locations = []
-
-            from .core import iter_text_locations
 
             locations = iter_text_locations(
                 source
@@ -198,26 +214,48 @@ def translate_file(
 
             translated_segments: list[str] = []
 
-            for location in locations:
+            # IMPORTANT:
+            #
+            # TextLocation intentionally does not contain
+            # an "index" property.
+            #
+            # The index is the position returned by
+            # enumerate(), and must match the index used
+            # by build_translation_tasks().
+            #
+            for location_index, location in enumerate(
+                locations
+            ):
                 key = (
                     unit_index,
-                    location.index,
+                    location_index,
                 )
 
-                if key not in (
-                    translated_by_location
-                ):
+                if key not in translated_by_location:
                     raise ValueError(
                         "Missing translation for "
                         f"trans-unit "
                         f"{get_unit_id(unit)!r}, "
                         f"location "
-                        f"{location.index}."
+                        f"{location_index}."
                     )
 
                 translated_segments.append(
                     translated_by_location[key]
                 )
+
+            # --------------------------------------------------
+            # Build target from source structure.
+            #
+            # This:
+            #
+            #   1. Deep-copies source
+            #   2. Changes <source> -> <target>
+            #   3. Preserves all XML elements
+            #   4. Preserves attributes
+            #   5. Preserves nested <g> elements
+            #   6. Replaces ONLY text locations
+            # --------------------------------------------------
 
             target = build_translation_target(
                 source,
@@ -234,12 +272,23 @@ def translate_file(
 
         # --------------------------------------------------
         # Final safety validation.
+        #
+        # This verifies that translation did not damage
+        # the original XLIFF structure.
         # --------------------------------------------------
 
         validate_translation_tree(
             original_tree=original_tree,
             translated_tree=working_tree,
         )
+
+        # --------------------------------------------------
+        # Output filename.
+        #
+        # Example:
+        #
+        # Create-functional-architecture.fra_Latn.xlf
+        # --------------------------------------------------
 
         output_path = (
             output_dir
