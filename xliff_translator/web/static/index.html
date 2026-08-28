@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>XLIFF Translator</title>
+
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+    <main class="page">
+
+        <section class="hero">
+
+            <div class="badge">
+                XLIFF TRANSLATOR
+            </div>
+
+            <h1>
+                Translate XLIFF files
+                without breaking their structure.
+            </h1>
+
+            <p class="subtitle">
+                Upload your XLIFF file, choose the target
+                language, and download the translated file.
+            </p>
+
+        </section>
+
+
+        <section class="card">
+
+            <form id="translation-form">
+
+                <div class="form-section">
+
+                    <label class="label">
+                        XLIFF file
+                    </label>
+
+                    <label for="file" class="drop-zone" id="drop-zone">
+
+                        <div class="upload-icon">
+                            ↑
+                        </div>
+
+                        <div>
+                            <strong>
+                                Choose an XLF/XLIFF file
+                            </strong>
+
+                            <span>
+                                or drag and drop it here
+                            </span>
+                        </div>
+
+                        <input type="file" id="file" name="file" accept=".xlf,.xliff" hidden required>
+
+                    </label>
+
+                    <div class="selected-file" id="selected-file"></div>
+
+                </div>
+
+
+                <div class="form-section">
+
+                    <label class="label">
+                        Target languages
+                    </label>
+
+                    <div class="languages">
+
+                        <label class="language-option">
+                            <input type="checkbox" name="language" value="fr">
+                            <span>
+                                French
+                            </span>
+                            <small>
+                                fr
+                            </small>
+                        </label>
+
+
+                        <label class="language-option">
+                            <input type="checkbox" name="language" value="de">
+                            <span>
+                                German
+                            </span>
+                            <small>
+                                de
+                            </small>
+                        </label>
+
+
+                        <label class="language-option">
+                            <input type="checkbox" name="language" value="en">
+                            <span>
+                                English
+                            </span>
+                            <small>
+                                en
+                            </small>
+                        </label>
+
+                    </div>
+
+                </div>
+
+
+                <div class="form-section">
+
+                    <label class="label" for="model">
+                        Translation model
+                    </label>
+
+                    <select id="model" name="model">
+
+                        <option value="facebook/nllb-200-distilled-600M">
+                            NLLB-200 Distilled 600M
+                        </option>
+
+                        <option value="facebook/nllb-200-1.3B">
+                            NLLB-200 1.3B
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <button type="submit" id="translate-button">
+                    Translate XLIFF
+                </button>
+
+            </form>
+
+
+            <div class="status hidden" id="status">
+
+                <div class="spinner"></div>
+
+                <div>
+                    <strong id="status-title">
+                        Translating...
+                    </strong>
+
+                    <span id="status-message">
+                        Please wait.
+                    </span>
+                </div>
+
+            </div>
+
+
+            <div class="results hidden" id="results">
+
+                <h2>
+                    Translation complete
+                </h2>
+
+                <div id="download-list"></div>
+
+            </div>
+
+
+            <div class="error hidden" id="error"></div>
+
+        </section>
+
+
+        <footer>
+            Structure-preserving translation powered by NLLB.
+        </footer>
+
+    </main>
+
+
+    <script src="/static/app.js"></script>
+
+</body>
+
+</html>

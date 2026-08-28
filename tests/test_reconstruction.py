@@ -16,10 +16,10 @@ from xliff_translator.core import (
 )
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 XLIFF_FILE = (
-    BASE_DIR.parent
+    BASE_DIR
     / "Create-functional-architecture.xlf"
 )
 
