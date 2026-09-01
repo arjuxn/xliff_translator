@@ -5,7 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xliff-nllb-translator"
 version = "0.1.0"
-dependencies = []
+description = "Local XLIFF 1.2 translator using NLLB with XML structure and DNT preservation."
+requires-python = ">=3.10"
+dependencies = [
+    "lxml>=5.3,<7",
+    "transformers>=4.45,<5",
+    "torch>=2.2",
+    "sentencepiece>=0.2",
+    "safetensors>=0.4",
+    "tqdm>=4.66",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
 
 [project.scripts]
 xliff-translator = "xliff_translator.cli:main"

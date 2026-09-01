@@ -1,67 +1,229 @@
 # XLIFF NLLB Translator
 
-A local Python tool for translating XLIFF 1.2 files with NLLB while preserving the original XML structure, IDs, attributes, inline `<g>` elements, and non-translatable XML content.
+A local XLIFF 1.2 translation tool powered by Meta's NLLB models.
 
-## Design
+The application translates text inside XLIFF files while preserving XML structure, IDs, attributes, inline elements, and source content. It also supports user-defined Do Not Translate (DNT) terms.
 
-The original `<source>` is never modified. For each `<trans-unit>`, the tool creates/replaces a `<target>` containing the translated text while cloning the source structure.
+## Features
 
-For structured sources, text leaves are extracted into numbered protected segments. NLLB translates the combined text with protected markers. The translated text is mapped back onto the exact original text-node positions, so formatting nodes and attributes remain untouched.
+- XLIFF 1.2 translation
+- NLLB neural translation
+- CPU and NVIDIA CUDA support
+- Multiple target languages
+- Browser-based GUI
+- Command-line interface
+- XLIFF drag-and-drop upload
+- DNT terms entered directly in the GUI
+- Optional `.txt` DNT list upload
+- DNT preservation validation
+- XML structure validation
+- Downloadable translated XLIFF files
+- Local processing
 
-Empty/markup-only units are copied without translation.
+## Requirements
 
-## Install
+- Python 3.10+
+- PyTorch
+- Hugging Face Transformers
+- NVIDIA GPU is optional
 
-Python 3.10+ is recommended.
+Default model:
+
+`facebook/nllb-200-distilled-600M`
+
+The first run may download the model from Hugging Face.
+
+## Installation
+
+Create a virtual environment:
 
 ```powershell
-cd xliff_translator
 python -m venv .venv
+```
+
+Activate it:
+
+```powershell
 .\.venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```powershell
 pip install -r requirements.txt
 ```
 
-For CPU use the default PyTorch install. For NVIDIA GPU, install the appropriate CUDA-enabled PyTorch build first, then install the requirements.
+For NVIDIA GPU use, install a CUDA-compatible PyTorch build appropriate for your system.
 
-## Usage
+## Run the GUI
 
-Dry-run extraction (no model required):
+From the project root:
+
+```powershell
+python -m uvicorn xliff_translator.web.app:app --reload
+```
+
+Open:
+
+`http://127.0.0.1:8000`
+
+The GUI lets you upload an XLIFF file, select target languages and the model, enter optional DNT terms or upload a DNT `.txt` file, start translation, and download the results.
+
+## DNT — Do Not Translate
+
+DNT terms are terms that must remain unchanged.
+
+Example:
+
+```text
+START
+RFLP
+3DEXPERIENCE
+True
+False
+Congratulations!
+```
+
+Use one term per line. Blank lines are ignored.
+
+If `Congratulations!` is protected, a source such as:
+
+```text
+Congratulations! You have completed this lesson.
+```
+
+can produce:
+
+```text
+Congratulations! Vous avez terminé cette leçon.
+```
+
+The surrounding text is translated while the protected term is restored exactly.
+
+If a protected term cannot be safely preserved, the translation fails instead of silently changing the term.
+
+## DNT text file
+
+A DNT list can be uploaded as a plain `.txt` file:
+
+```text
+START
+RFLP
+3DEXPERIENCE
+True
+False
+Logical connections
+Congratulations!
+```
+
+## Command-line interface
+
+Inspect an XLIFF without loading the translation model:
 
 ```powershell
 python -m xliff_translator inspect input.xlf
 ```
 
-Translate to French and German:
+Translate:
 
 ```powershell
 python -m xliff_translator translate input.xlf --langs fr,de --output-dir output
 ```
 
-Specify the NLLB model explicitly:
+Use CUDA:
 
 ```powershell
-python -m xliff_translator translate input.xlf --langs fr,de --model facebook/nllb-200-distilled-600M --output-dir output
+python -m xliff_translator translate input.xlf --langs fr --device cuda --output-dir output
 ```
 
-GPU:
+Use CPU:
 
 ```powershell
-python -m xliff_translator translate input.xlf --langs fr,de --device cuda --output-dir output
+python -m xliff_translator translate input.xlf --langs fr --device cpu --output-dir output
 ```
 
-Use a larger model if GPU memory allows:
+Specify a model:
 
 ```powershell
---model facebook/nllb-200-1.3B
+python -m xliff_translator translate input.xlf --langs fr --model facebook/nllb-200-distilled-600M --output-dir output
 ```
 
-## Important
+## GPU check
 
-NLLB language codes used by this project are `eng_Latn`, `fra_Latn`, and `deu_Latn`.
+```powershell
+nvidia-smi
+```
 
-The implementation deliberately does not pretty-print XML. It preserves the XML tree and only inserts/replaces `<target>` elements. XML serialization can still normalize insignificant byte-level formatting; semantic structure, element names, attributes, IDs and ordering are preserved.
+Check PyTorch CUDA access:
 
+```powershell
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
 
-### Progress bar
+## XML preservation
 
-The `translate` command shows a per-language progress bar as each `trans-unit` is processed. The progress bar starts after NLLB finishes loading; model download/loading can still take time before translation begins.
+The original `<source>` elements are not modified.
+
+Target content is created from a copy of the source structure, with textual values replaced by translations.
+
+The following are preserved structurally:
+
+- XML element hierarchy
+- Element names
+- Attributes
+- Translation-unit IDs
+- Inline elements
+- Ordering
+- Source content
+
+The application does not promise byte-for-byte preservation of XML serialization. XML serialization can normalize insignificant formatting.
+
+## Project structure
+
+```text
+xliff_translator/
+├── README.md
+├── CODEBASE_GUIDE.md
+├── pyproject.toml
+├── requirements.txt
+├── tests/
+└── xliff_translator/
+    ├── __init__.py
+    ├── __main__.py
+    ├── cli.py
+    ├── core.py
+    ├── dnt.py
+    ├── nllb.py
+    ├── pipeline.py
+    └── web/
+        ├── __init__.py
+        ├── app.py
+        └── static/
+            ├── index.html
+            ├── app.js
+            └── style.css
+```
+
+## Testing
+
+Run:
+
+```powershell
+python -m pytest -q
+```
+
+## Development artifacts
+
+These are local/generated artifacts and are not required as application source:
+
+```text
+.venv/
+__pycache__/
+.pytest_cache/
+input/
+output/
+web_data/
+inspect.txt
+```
+
+The `inspect` CLI command itself remains available as a development utility.

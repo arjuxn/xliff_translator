@@ -16,7 +16,6 @@ from .core import (
     validate_translation_tree,
     write_xliff,
 )
-
 from .dnt import (
     find_dnt_terms_in_text,
     load_dnt_terms,
@@ -25,6 +24,199 @@ from .dnt import (
 
 
 SOURCE_LANGUAGE = "eng_Latn"
+
+
+def _load_dnt_terms(
+    dnt_path: str | Path | None,
+    dnt_terms: list[str] | None,
+) -> list[str]:
+    """Load and normalize DNT terms from all configured sources."""
+
+    terms: list[str] = []
+
+    if dnt_path is not None:
+        terms.extend(
+            load_dnt_terms(dnt_path)
+        )
+
+    if dnt_terms:
+        terms.extend(dnt_terms)
+
+    return normalise_dnt_terms(terms)
+
+
+def _translate_tasks(
+    tasks,
+    translator,
+    language: str,
+    protected_terms: list[str],
+) -> dict[tuple[int, int], str]:
+    """
+    Translate tasks and map each result back to its XML location.
+    """
+
+    if not tasks:
+        return {}
+
+    batch_size = max(
+        1,
+        int(
+            getattr(
+                translator,
+                "batch_size",
+                4,
+            )
+        ),
+    )
+
+    translated_by_location: dict[
+        tuple[int, int],
+        str,
+    ] = {}
+
+    total_batches = (
+        len(tasks) + batch_size - 1
+    ) // batch_size
+
+    for start in tqdm(
+        range(
+            0,
+            len(tasks),
+            batch_size,
+        ),
+        total=total_batches,
+        desc=f"NLLB {language}",
+        unit="batch",
+    ):
+        batch_tasks = tasks[
+            start:
+            start + batch_size
+        ]
+
+        texts = [
+            task.text
+            for task in batch_tasks
+        ]
+
+        if protected_terms:
+            protected_terms_per_text = [
+                find_dnt_terms_in_text(
+                    text,
+                    protected_terms,
+                )
+                for text in texts
+            ]
+
+            translations = translator.translate_batch(
+                texts,
+                SOURCE_LANGUAGE,
+                language,
+                protected_terms=(
+                    protected_terms_per_text
+                ),
+            )
+
+        else:
+            translations = translator.translate_batch(
+                texts,
+                SOURCE_LANGUAGE,
+                language,
+            )
+
+        if len(translations) != len(batch_tasks):
+            raise ValueError(
+                "NLLB returned "
+                f"{len(translations)} translations "
+                "for "
+                f"{len(batch_tasks)} inputs."
+            )
+
+        for task, translation in zip(
+            batch_tasks,
+            translations,
+        ):
+            translated_by_location[
+                (
+                    task.unit_index,
+                    task.location_index,
+                )
+            ] = translation
+
+    return translated_by_location
+
+
+def _rebuild_targets(
+    working_tree,
+    translated_by_location: dict[
+        tuple[int, int],
+        str,
+    ],
+    language: str,
+) -> int:
+    """Rebuild all target elements from translated text values."""
+
+    working_units = find_trans_units(
+        working_tree
+    )
+
+    translated_units_count = 0
+
+    progress = tqdm(
+        enumerate(working_units),
+        total=len(working_units),
+        desc=f"Rebuilding {language}",
+        unit="unit",
+    )
+
+    for unit_index, unit in progress:
+        source = find_source(unit)
+
+        if source is None:
+            continue
+
+        locations = iter_text_locations(
+            source
+        )
+
+        if not locations:
+            continue
+
+        translated_segments: list[str] = []
+
+        for location_index in range(
+            len(locations)
+        ):
+            key = (
+                unit_index,
+                location_index,
+            )
+
+            if key not in translated_by_location:
+                raise ValueError(
+                    "Missing translation for "
+                    f"trans-unit "
+                    f"{get_unit_id(unit)!r}, "
+                    f"location "
+                    f"{location_index}."
+                )
+
+            translated_segments.append(
+                translated_by_location[key]
+            )
+
+        target = build_translation_target(
+            source,
+            translated_segments,
+        )
+
+        replace_or_add_target(
+            trans_unit=unit,
+            target_content=target,
+        )
+
+        translated_units_count += 1
+
+    return translated_units_count
 
 
 def translate_file(
@@ -36,78 +228,38 @@ def translate_file(
     dnt_terms: list[str] | None = None,
 ) -> list[Path]:
     """
-    Translate one XLIFF file into one output file
-    for every requested target language.
+    Translate an XLIFF file into one output file per target language.
 
-    XML structure is preserved.
-
-    DNT terms are enforced inside NLLB using constrained
-    beam search rather than sending artificial DNT markers
-    through the translation model.
+    XML structure is preserved by cloning each source element and
+    replacing only its text/tail values with translated strings.
     """
 
-    input_path = Path(
-        input_path
-    )
-
-    output_dir = Path(
-        output_dir
-    )
+    input_path = Path(input_path)
+    output_dir = Path(output_dir)
 
     output_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # --------------------------------------------------
-    # Load DNT terms.
-    # --------------------------------------------------
-
-    loaded_dnt_terms: list[str] = []
-
-    if dnt_path is not None:
-
-        loaded_dnt_terms.extend(
-            load_dnt_terms(
-                dnt_path
-            )
-        )
-
-    if dnt_terms:
-
-        loaded_dnt_terms.extend(
-            normalise_dnt_terms(
-                dnt_terms
-            )
-        )
-
-    loaded_dnt_terms = (
-        normalise_dnt_terms(
-            loaded_dnt_terms
-        )
+    protected_terms = _load_dnt_terms(
+        dnt_path=dnt_path,
+        dnt_terms=dnt_terms,
     )
 
-    if loaded_dnt_terms:
-
+    if protected_terms:
         print(
             f"DNT terms loaded: "
-            f"{len(loaded_dnt_terms)}"
+            f"{len(protected_terms)}"
         )
 
     outputs: list[Path] = []
 
     for language in languages:
-
         print()
         print("=" * 60)
-        print(
-            f"Translating -> {language}"
-        )
+        print(f"Translating -> {language}")
         print("=" * 60)
-
-        # --------------------------------------------------
-        # Parse independent copies.
-        # --------------------------------------------------
 
         original_tree = parse_xliff(
             input_path
@@ -115,14 +267,6 @@ def translate_file(
 
         working_tree = parse_xliff(
             input_path
-        )
-
-        # --------------------------------------------------
-        # Build text-only translation tasks.
-        # --------------------------------------------------
-
-        tasks = build_translation_tasks(
-            original_tree
         )
 
         original_units = find_trans_units(
@@ -133,244 +277,33 @@ def translate_file(
             working_tree
         )
 
-        if len(original_units) != len(
-            working_units
-        ):
-
+        if len(original_units) != len(working_units):
             raise ValueError(
                 "Original and working XLIFF "
                 "have different trans-unit counts."
             )
 
-        # --------------------------------------------------
-        # Translation results.
-        #
-        # key:
-        #
-        #     (unit_index, location_index)
-        #
-        # value:
-        #
-        #     translated text
-        # --------------------------------------------------
-
-        translated_by_location: dict[
-            tuple[int, int],
-            str,
-        ] = {}
-
-        batch_size = getattr(
-            translator,
-            "batch_size",
-            4,
+        tasks = build_translation_tasks(
+            original_tree
         )
 
-        # --------------------------------------------------
-        # Translation batches.
-        # --------------------------------------------------
-
-        for start in tqdm(
-            range(
-                0,
-                len(tasks),
-                batch_size,
-            ),
-            total=(
-                (
-                    len(tasks)
-                    + batch_size
-                    - 1
-                )
-                // batch_size
-            ),
-            desc=f"NLLB {language}",
-            unit="batch",
-        ):
-
-            batch_tasks = tasks[
-                start:
-                start + batch_size
-            ]
-
-            texts = [
-                task.text
-                for task in batch_tasks
-            ]
-
-            # --------------------------------------------------
-            # Determine DNT terms actually present in each
-            # text location.
-            # --------------------------------------------------
-
-            protected_terms_per_text = [
-                find_dnt_terms_in_text(
-                    text,
-                    loaded_dnt_terms,
-                )
-                for text in texts
-            ]
-
-            # --------------------------------------------------
-            # Normal path when no DNT feature is active.
-            #
-            # Keeping the old call signature here avoids
-            # changing behaviour for normal translation.
-            # --------------------------------------------------
-
-            if not loaded_dnt_terms:
-
-                translations = (
-                    translator.translate_batch(
-                        texts,
-                        SOURCE_LANGUAGE,
-                        language,
-                    )
-                )
-
-            else:
-
-                translations = (
-                    translator.translate_batch(
-                        texts,
-                        SOURCE_LANGUAGE,
-                        language,
-                        protected_terms=(
-                            protected_terms_per_text
-                        ),
-                    )
-                )
-
-            if len(translations) != len(
-                batch_tasks
-            ):
-
-                raise ValueError(
-                    "NLLB returned "
-                    f"{len(translations)} "
-                    "translations for "
-                    f"{len(batch_tasks)} inputs."
-                )
-
-            for task, translation in zip(
-                batch_tasks,
-                translations,
-            ):
-
-                translated_by_location[
-                    (
-                        task.unit_index,
-                        task.location_index,
-                    )
-                ] = translation
-
-        # --------------------------------------------------
-        # Reconstruct target XML.
-        # --------------------------------------------------
-
-        translated_units_count = 0
-
-        progress_units = tqdm(
-            enumerate(
-                working_units
-            ),
-            total=len(
-                working_units
-            ),
-            desc=f"Rebuilding {language}",
-            unit="unit",
+        translated_by_location = _translate_tasks(
+            tasks=tasks,
+            translator=translator,
+            language=language,
+            protected_terms=protected_terms,
         )
 
-        for (
-            unit_index,
-            unit,
-        ) in progress_units:
-
-            source = find_source(
-                unit
-            )
-
-            if source is None:
-                continue
-
-            locations = (
-                iter_text_locations(
-                    source
-                )
-            )
-
-            translated_segments: list[
-                str
-            ] = []
-
-            # --------------------------------------------------
-            # Match translation results to the exact source
-            # text location.
-            # --------------------------------------------------
-
-            for (
-                location_index,
-                location,
-            ) in enumerate(
-                locations
-            ):
-
-                key = (
-                    unit_index,
-                    location_index,
-                )
-
-                if key not in (
-                    translated_by_location
-                ):
-
-                    raise ValueError(
-                        "Missing translation for "
-                        f"trans-unit "
-                        f"{get_unit_id(unit)!r}, "
-                        f"location "
-                        f"{location_index}."
-                    )
-
-                translated_segments.append(
-                    translated_by_location[
-                        key
-                    ]
-                )
-
-            # --------------------------------------------------
-            # Build target from source structure.
-            #
-            # XML elements and attributes are preserved.
-            # Only text/tail values are replaced.
-            # --------------------------------------------------
-
-            target = (
-                build_translation_target(
-                    source,
-                    translated_segments,
-                )
-            )
-
-            replace_or_add_target(
-                trans_unit=unit,
-                target_content=target,
-            )
-
-            if locations:
-                translated_units_count += 1
-
-        # --------------------------------------------------
-        # Final XML validation.
-        # --------------------------------------------------
+        translated_units_count = _rebuild_targets(
+            working_tree=working_tree,
+            translated_by_location=translated_by_location,
+            language=language,
+        )
 
         validate_translation_tree(
             original_tree=original_tree,
             translated_tree=working_tree,
         )
-
-        # --------------------------------------------------
-        # Output path.
-        # --------------------------------------------------
 
         output_path = (
             output_dir
@@ -397,8 +330,6 @@ def translate_file(
             f"Output: {output_path}"
         )
 
-        outputs.append(
-            output_path
-        )
+        outputs.append(output_path)
 
     return outputs

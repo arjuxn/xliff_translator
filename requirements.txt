@@ -4,3 +4,6 @@ torch>=2.2
 sentencepiece>=0.2
 safetensors>=0.4
 tqdm>=4.66
+fastapi
+uvicorn[standard]
+python-multipart

@@ -4,9 +4,43 @@ from pathlib import Path
 from typing import Iterable
 
 
+def normalise_dnt_terms(
+    terms: Iterable[str],
+) -> list[str]:
+    """
+    Normalize a collection of DNT terms.
+
+    Terms are stripped of surrounding whitespace.
+    Empty terms are ignored.
+    Duplicate terms are removed while preserving order.
+    Matching remains case-sensitive.
+    """
+
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for raw_term in terms:
+        term = str(raw_term).strip()
+
+        if not term or term in seen:
+            continue
+
+        seen.add(term)
+        result.append(term)
+
+    return result
+
+
 def load_dnt_terms(
     path: str | Path,
 ) -> list[str]:
+    """
+    Load DNT terms from a UTF-8 text file.
+
+    The expected format is one term per line.
+    UTF-8 BOMs are handled automatically.
+    """
+
     path = Path(path)
 
     if not path.exists():
@@ -23,31 +57,11 @@ def load_dnt_terms(
     )
 
 
-def normalise_dnt_terms(
-    terms: Iterable[str],
-) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-
-    for raw_term in terms:
-
-        term = str(raw_term).strip()
-
-        if not term:
-            continue
-
-        if term in seen:
-            continue
-
-        seen.add(term)
-        result.append(term)
-
-    return result
-
-
-def _word_character(
+def _is_word_character(
     character: str,
 ) -> bool:
+    """Return whether a character belongs to a word."""
+
     return (
         character.isalnum()
         or character == "_"
@@ -58,11 +72,12 @@ def _has_left_boundary(
     text: str,
     start: int,
 ) -> bool:
+    """Check the left boundary of a potential DNT match."""
 
     if start == 0:
         return True
 
-    return not _word_character(
+    return not _is_word_character(
         text[start - 1]
     )
 
@@ -71,11 +86,12 @@ def _has_right_boundary(
     text: str,
     end: int,
 ) -> bool:
+    """Check the right boundary of a potential DNT match."""
 
     if end >= len(text):
         return True
 
-    return not _word_character(
+    return not _is_word_character(
         text[end]
     )
 
@@ -84,40 +100,53 @@ def find_dnt_spans(
     text: str,
     terms: Iterable[str],
 ) -> list[tuple[int, int, str]]:
+    """
+    Find DNT term occurrences in text.
 
-    normalised = normalise_dnt_terms(
+    Matching is:
+    - case-sensitive
+    - boundary-aware
+    - longest-term-first for overlapping terms
+
+    Returns:
+        (start, end, matched_term)
+    """
+
+    if not text:
+        return []
+
+    normalised_terms = normalise_dnt_terms(
         terms
     )
 
-    if not text or not normalised:
+    if not normalised_terms:
         return []
 
+    # Longer terms must be considered first so that an overlapping
+    # term does not consume part of a longer protected term.
     ordered_terms = sorted(
-        normalised,
+        normalised_terms,
         key=len,
         reverse=True,
     )
 
-    candidates = []
+    candidates: list[
+        tuple[int, int, str]
+    ] = []
 
     for term in ordered_terms:
-
-        start = 0
+        search_start = 0
 
         while True:
-
             position = text.find(
                 term,
-                start,
+                search_start,
             )
 
             if position == -1:
                 break
 
-            end = (
-                position
-                + len(term)
-            )
+            end = position + len(term)
 
             if (
                 _has_left_boundary(
@@ -129,7 +158,6 @@ def find_dnt_spans(
                     end,
                 )
             ):
-
                 candidates.append(
                     (
                         position,
@@ -138,8 +166,12 @@ def find_dnt_spans(
                     )
                 )
 
-            start = position + 1
+            # Move forward even after a match so multiple occurrences
+            # of the same term are detected.
+            search_start = position + 1
 
+    # Earlier positions first; for identical starting positions,
+    # prefer the longest match.
     candidates.sort(
         key=lambda item: (
             item[0],
@@ -147,12 +179,13 @@ def find_dnt_spans(
         )
     )
 
-    selected = []
+    selected: list[
+        tuple[int, int, str]
+    ] = []
 
     occupied_until = -1
 
     for start, end, term in candidates:
-
         if start < occupied_until:
             continue
 
@@ -173,11 +206,11 @@ def find_dnt_terms_in_text(
     text: str,
     terms: Iterable[str],
 ) -> list[str]:
+    """Return DNT terms occurring in the supplied text."""
 
     return [
         term
-        for _, _, term
-        in find_dnt_spans(
+        for _, _, term in find_dnt_spans(
             text,
             terms,
         )
@@ -188,6 +221,7 @@ def count_dnt_terms(
     text: str,
     terms: Iterable[str],
 ) -> dict[str, int]:
+    """Count occurrences of each DNT term in text."""
 
     counts: dict[str, int] = {}
 
@@ -195,10 +229,8 @@ def count_dnt_terms(
         text,
         terms,
     ):
-
         counts[term] = (
-            counts.get(term, 0)
-            + 1
+            counts.get(term, 0) + 1
         )
 
     return counts
@@ -209,6 +241,10 @@ def validate_dnt_preservation(
     translated_text: str,
     terms: Iterable[str],
 ) -> None:
+    """
+    Verify that DNT terms occurring in the source occur the same
+    number of times in the translated text.
+    """
 
     source_counts = count_dnt_terms(
         source_text,
@@ -223,23 +259,18 @@ def validate_dnt_preservation(
         source_counts.keys(),
     )
 
-    for term, expected in (
-        source_counts.items()
-    ):
-
-        actual = translated_counts.get(
+    for term, expected_count in source_counts.items():
+        actual_count = translated_counts.get(
             term,
             0,
         )
 
-        if actual != expected:
-
+        if actual_count != expected_count:
             raise ValueError(
-                "DNT term was not preserved "
-                "exactly: "
+                "DNT term was not preserved exactly: "
                 f"{term!r}. "
-                f"Expected {expected} "
-                f"occurrence(s), got {actual}."
+                f"Expected {expected_count} occurrence(s), "
+                f"got {actual_count}."
             )
 
 
@@ -247,6 +278,13 @@ def protect_dnt_terms(
     text: str,
     terms: Iterable[str],
 ) -> tuple[str, dict[str, str]]:
+    """
+    Replace DNT terms with temporary markers.
+
+    This helper is retained for compatibility with the DNT tests and
+    public module API. The main XLIFF pipeline uses the NLLB-specific
+    placeholder mechanism instead.
+    """
 
     spans = find_dnt_spans(
         text,
@@ -257,17 +295,12 @@ def protect_dnt_terms(
         return text, {}
 
     mapping: dict[str, str] = {}
-
-    parts = []
-
+    parts: list[str] = []
     cursor = 0
 
-    for index, (
-        start,
-        end,
-        term,
-    ) in enumerate(spans):
-
+    for index, (start, end, term) in enumerate(
+        spans
+    ):
         marker = (
             f"[[XLIFF_DNT_{index}]]"
         )
@@ -275,13 +308,9 @@ def protect_dnt_terms(
         parts.append(
             text[cursor:start]
         )
-
-        parts.append(
-            marker
-        )
+        parts.append(marker)
 
         mapping[marker] = term
-
         cursor = end
 
     parts.append(
@@ -298,11 +327,11 @@ def restore_dnt_terms(
     text: str,
     mapping: dict[str, str],
 ) -> str:
+    """Restore DNT terms from temporary markers."""
 
     result = text
 
     for marker, term in mapping.items():
-
         result = result.replace(
             marker,
             term,
@@ -315,17 +344,13 @@ def validate_dnt_markers(
     text: str,
     mapping: dict[str, str],
 ) -> None:
+    """Verify that every temporary DNT marker survived."""
 
     for marker in mapping:
-
-        count = text.count(
-            marker
-        )
+        count = text.count(marker)
 
         if count != 1:
-
             raise ValueError(
                 "DNT marker validation failed: "
-                f"{marker!r} occurred "
-                f"{count} time(s)."
+                f"{marker!r} occurred {count} time(s)."
             )

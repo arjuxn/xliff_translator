@@ -101,7 +101,10 @@ fileInput.addEventListener(
             fileInput.files[0];
 
         if (!file) {
-            selectedFile.textContent = "";
+
+            selectedFile.textContent =
+                "";
+
             return;
         }
 
@@ -199,7 +202,9 @@ dntFileInput.addEventListener(
             dntFileInput.files[0];
 
         if (!file) {
+
             hideDntFile();
+
             return;
         }
 
@@ -213,7 +218,8 @@ dntFileInput.addEventListener(
                 "Protected terms file must be a .txt file."
             );
 
-            dntFileInput.value = "";
+            dntFileInput.value =
+                "";
 
             hideDntFile();
 
@@ -240,7 +246,8 @@ removeDntFile.addEventListener(
     "click",
     () => {
 
-        dntFileInput.value = "";
+        dntFileInput.value =
+            "";
 
         hideDntFile();
     }
@@ -316,13 +323,7 @@ form.addEventListener(
         event.preventDefault();
 
         hideError();
-
         hideResults();
-
-
-        // ----------------------------------------------------
-        // XLIFF
-        // ----------------------------------------------------
 
         const file =
             fileInput.files[0];
@@ -336,10 +337,6 @@ form.addEventListener(
             return;
         }
 
-
-        // ----------------------------------------------------
-        // LANGUAGES
-        // ----------------------------------------------------
 
         const selectedLanguages =
             document.querySelectorAll(
@@ -360,25 +357,17 @@ form.addEventListener(
             Array.from(
                 selectedLanguages
             )
-            .map(
-                input => input.value
-            )
-            .join(",");
+                .map(
+                    input => input.value
+                )
+                .join(",");
 
-
-        // ----------------------------------------------------
-        // MODEL
-        // ----------------------------------------------------
 
         const model =
             document.getElementById(
                 "model"
             ).value;
 
-
-        // ----------------------------------------------------
-        // FORM DATA
-        // ----------------------------------------------------
 
         const formData =
             new FormData();
@@ -389,28 +378,21 @@ form.addEventListener(
             file
         );
 
-
         formData.append(
             "languages",
             languages
         );
-
 
         formData.append(
             "model",
             model
         );
 
-
         formData.append(
             "dnt_terms",
             dntTerms.value
         );
 
-
-        // ----------------------------------------------------
-        // DNT FILE
-        // ----------------------------------------------------
 
         const dntFile =
             dntFileInput.files[0];
@@ -425,15 +407,10 @@ form.addEventListener(
 
 
         // ----------------------------------------------------
-        // LOADING
+        // START LOADING
         // ----------------------------------------------------
 
-        translateButton.disabled =
-            true;
-
-        status.classList.remove(
-            "hidden"
-        );
+        setLoading(true);
 
         statusTitle.textContent =
             "Translating...";
@@ -479,29 +456,17 @@ form.addEventListener(
             }
 
 
+            // ------------------------------------------------
+            // SUCCESS
+            // ------------------------------------------------
+
             showResults(
                 data
             );
 
-
-            statusTitle.textContent =
-                "Translation complete.";
-
-            if (
-                data.dnt_terms_enabled &&
-                data.dnt_terms_count
-            ) {
-
-                statusMessage.textContent =
-                    `${data.dnt_terms_count} protected term(s) were preserved.`;
-
-            }
-            else {
-
-                statusMessage.textContent =
-                    "Your translated files are ready.";
-
-            }
+            // The translation is finished, so remove the
+            // loading status/spinner immediately.
+            hideStatus();
 
         }
         catch (error) {
@@ -518,10 +483,47 @@ form.addEventListener(
 
             translateButton.disabled =
                 false;
+
         }
 
     }
 );
+
+
+// ============================================================
+// LOADING STATE
+// ============================================================
+
+function setLoading(
+    loading
+) {
+
+    translateButton.disabled =
+        loading;
+
+    if (loading) {
+
+        status.classList.remove(
+            "hidden"
+        );
+
+    }
+    else {
+
+        status.classList.add(
+            "hidden"
+        );
+
+    }
+}
+
+
+function hideStatus() {
+
+    status.classList.add(
+        "hidden"
+    );
+}
 
 
 // ============================================================
@@ -599,10 +601,6 @@ function showResults(
 }
 
 
-// ============================================================
-// HELPERS
-// ============================================================
-
 function hideResults() {
 
     results.classList.add(
@@ -611,16 +609,15 @@ function hideResults() {
 
     downloadList.innerHTML =
         "";
+
+    resultSummary.textContent =
+        "";
 }
 
 
-function hideStatus() {
-
-    status.classList.add(
-        "hidden"
-    );
-}
-
+// ============================================================
+// ERROR
+// ============================================================
 
 function showError(
     message

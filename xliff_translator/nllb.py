@@ -11,6 +11,7 @@ from transformers import (
 
 from .dnt import (
     count_dnt_terms,
+    find_dnt_spans,
     normalise_dnt_terms,
     validate_dnt_preservation,
 )
@@ -18,59 +19,28 @@ from .dnt import (
 
 @dataclass
 class NLLBTranslator:
+    """NLLB-200 translation engine with optional DNT protection."""
 
     model_name: str = (
         "facebook/nllb-200-distilled-600M"
     )
-
     device: str = "auto"
-
     max_input_tokens: int = 1024
-
     max_new_tokens: int = 1024
-
     batch_size: int = 4
-
     num_beams: int = 4
 
-    def __post_init__(self):
-
-        if self.device == "auto":
-
-            self.device = (
-                "cuda"
-                if torch.cuda.is_available()
-                else "cpu"
-            )
-
-        if (
-            self.device.startswith("cuda")
-            and not torch.cuda.is_available()
-        ):
-
-            raise RuntimeError(
-                "CUDA was requested but "
-                "PyTorch cannot access CUDA."
-            )
-
-        self.torch_device = torch.device(
-            self.device
-        )
+    def __post_init__(self) -> None:
+        self.torch_device = self._resolve_device()
 
         print(
-            f"NLLB device: "
-            f"{self.torch_device}"
+            f"NLLB device: {self.torch_device}"
         )
 
-        if (
-            self.torch_device.type
-            == "cuda"
-        ):
-
+        if self.torch_device.type == "cuda":
             gpu_index = (
                 self.torch_device.index
-                if self.torch_device.index
-                is not None
+                if self.torch_device.index is not None
                 else torch.cuda.current_device()
             )
 
@@ -81,14 +51,12 @@ class NLLBTranslator:
 
         dtype = (
             torch.float16
-            if self.torch_device.type
-            == "cuda"
+            if self.torch_device.type == "cuda"
             else torch.float32
         )
 
         print(
-            f"Loading tokenizer: "
-            f"{self.model_name}"
+            f"Loading tokenizer: {self.model_name}"
         )
 
         self.tokenizer = (
@@ -99,8 +67,7 @@ class NLLBTranslator:
         )
 
         print(
-            f"Loading model: "
-            f"{self.model_name}"
+            f"Loading model: {self.model_name}"
         )
 
         self.model = (
@@ -116,30 +83,46 @@ class NLLBTranslator:
 
         self.model.eval()
 
-        print(
-            "NLLB model ready."
+        print("NLLB model ready.")
+
+    def _resolve_device(self) -> torch.device:
+        """Resolve and validate the requested execution device."""
+
+        if self.device == "auto":
+            device_name = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "cpu"
+            )
+        else:
+            device_name = self.device
+
+        if (
+            device_name.startswith("cuda")
+            and not torch.cuda.is_available()
+        ):
+            raise RuntimeError(
+                "CUDA was requested but "
+                "PyTorch cannot access CUDA."
+            )
+
+        return torch.device(
+            device_name
         )
 
-    # ==========================================================
-    # DNT PLACEHOLDER
-    # ==========================================================
-
+    @staticmethod
     def _placeholder(
-        self,
         index: int,
     ) -> str:
         """
-        Return a very distinctive placeholder.
+        Create a temporary placeholder for a DNT term.
 
-        The placeholder is composed of ordinary alphabetic
-        words rather than XML-like syntax or brackets.
-
-        Example:
-
-            XliffProtectedTermZero
+        The placeholder is intentionally made from ordinary
+        alphabetic characters because NLLB handles these more
+        reliably than XML-like marker syntax.
         """
 
-        names = [
+        names = (
             "Zero",
             "One",
             "Two",
@@ -156,18 +139,105 @@ class NLLBTranslator:
             "Thirteen",
             "Fourteen",
             "Fifteen",
-        ]
+        )
 
-        if index < len(names):
-
-            suffix = names[index]
-
-        else:
-
-            suffix = str(index)
+        suffix = (
+            names[index]
+            if index < len(names)
+            else str(index)
+        )
 
         return (
             f"XliffProtectedTerm{suffix}"
+        )
+
+    @staticmethod
+    def _normalise_placeholder(
+        text: str,
+    ) -> str:
+        """
+        Normalize whitespace inside an NLLB-generated placeholder.
+
+        NLLB may tokenize a placeholder such as:
+
+            XliffProtectedTermZero
+
+        and generate:
+
+            Xliff ProtectedTermZero
+
+        Removing whitespace allows us to recognize the placeholder
+        without allowing arbitrary text to be mistaken for it.
+        """
+
+        return "".join(
+            text.split()
+        )
+
+    def _find_generated_placeholder(
+        self,
+        text: str,
+        placeholder: str,
+    ) -> tuple[int, int] | None:
+        """
+        Find a placeholder in NLLB output.
+
+        NLLB may insert whitespace inside the placeholder. We therefore
+        compare a whitespace-normalized representation while returning
+        the original span from the generated text.
+        """
+
+        normalized_placeholder = (
+            self._normalise_placeholder(
+                placeholder
+            )
+        )
+
+        if not normalized_placeholder:
+            return None
+
+        normalized_output: list[str] = []
+        original_positions: list[int] = []
+
+        for index, character in enumerate(text):
+            if character.isspace():
+                continue
+
+            normalized_output.append(
+                character
+            )
+            original_positions.append(
+                index
+            )
+
+        normalized_text = "".join(
+            normalized_output
+        )
+
+        start = normalized_text.find(
+            normalized_placeholder
+        )
+
+        if start == -1:
+            return None
+
+        end = (
+            start
+            + len(normalized_placeholder)
+        )
+
+        original_start = (
+            original_positions[start]
+        )
+
+        original_end = (
+            original_positions[end - 1]
+            + 1
+        )
+
+        return (
+            original_start,
+            original_end,
         )
 
     def _protect_text(
@@ -175,10 +245,7 @@ class NLLBTranslator:
         text: str,
         terms: Sequence[str],
     ) -> tuple[str, dict[str, str]]:
-
-        from .dnt import (
-            find_dnt_spans,
-        )
+        """Replace DNT occurrences with temporary placeholders."""
 
         spans = find_dnt_spans(
             text,
@@ -188,8 +255,7 @@ class NLLBTranslator:
         if not spans:
             return text, {}
 
-        parts = []
-
+        parts: list[str] = []
         mapping: dict[str, str] = {}
 
         cursor = 0
@@ -200,10 +266,8 @@ class NLLBTranslator:
             term,
         ) in enumerate(spans):
 
-            placeholder = (
-                self._placeholder(
-                    index
-                )
+            placeholder = self._placeholder(
+                index
             )
 
             parts.append(
@@ -234,23 +298,45 @@ class NLLBTranslator:
         text: str,
         mapping: dict[str, str],
     ) -> str:
+        """
+        Restore DNT terms from NLLB output.
+
+        NLLB can insert whitespace inside a placeholder. This method
+        detects the placeholder using whitespace-insensitive matching,
+        removes the generated placeholder, and inserts the original
+        DNT term exactly as supplied by the user.
+        """
+
+        if not mapping:
+            return text
 
         result = text
 
-        for placeholder, term in (
-            mapping.items()
-        ):
+        for placeholder, term in mapping.items():
 
-            result = result.replace(
-                placeholder,
-                term,
+            span = (
+                self._find_generated_placeholder(
+                    result,
+                    placeholder,
+                )
+            )
+
+            if span is None:
+                raise ValueError(
+                    "NLLB modified or removed "
+                    "protected DNT terms. "
+                    f"Missing: [{term!r}]"
+                )
+
+            start, end = span
+
+            result = (
+                result[:start]
+                + term
+                + result[end:]
             )
 
         return result
-
-    # ==========================================================
-    # SINGLE BATCH
-    # ==========================================================
 
     def _generate_batch(
         self,
@@ -258,22 +344,20 @@ class NLLBTranslator:
         source_lang: str,
         target_lang: str,
     ) -> list[str]:
+        """Run one NLLB inference batch."""
 
         if not texts:
             return []
 
-        self.tokenizer.src_lang = (
-            source_lang
-        )
+        self.tokenizer.src_lang = source_lang
 
-        forced_bos = (
+        forced_bos_token_id = (
             self.tokenizer.convert_tokens_to_ids(
                 target_lang
             )
         )
 
-        if forced_bos is None:
-
+        if forced_bos_token_id is None:
             raise ValueError(
                 f"Unknown NLLB target language: "
                 f"{target_lang}"
@@ -291,35 +375,32 @@ class NLLBTranslator:
             key: value.to(
                 self.torch_device
             )
-            for key, value
-            in encoded.items()
+            for key, value in encoded.items()
+        }
+
+        generation_kwargs = {
+            "forced_bos_token_id": (
+                forced_bos_token_id
+            ),
+            "max_new_tokens": (
+                self.max_new_tokens
+            ),
+            "num_beams": self.num_beams,
+            "early_stopping": True,
         }
 
         with torch.inference_mode():
 
-            if (
-                self.torch_device.type
-                == "cuda"
-            ):
+            if self.torch_device.type == "cuda":
 
                 with torch.autocast(
                     device_type="cuda",
                     dtype=torch.float16,
                 ):
-
                     generated = (
                         self.model.generate(
                             **encoded,
-                            forced_bos_token_id=(
-                                forced_bos
-                            ),
-                            max_new_tokens=(
-                                self.max_new_tokens
-                            ),
-                            num_beams=(
-                                self.num_beams
-                            ),
-                            early_stopping=True,
+                            **generation_kwargs,
                         )
                     )
 
@@ -328,16 +409,7 @@ class NLLBTranslator:
                 generated = (
                     self.model.generate(
                         **encoded,
-                        forced_bos_token_id=(
-                            forced_bos
-                        ),
-                        max_new_tokens=(
-                            self.max_new_tokens
-                        ),
-                        num_beams=(
-                            self.num_beams
-                        ),
-                        early_stopping=True,
+                        **generation_kwargs,
                     )
                 )
 
@@ -348,10 +420,6 @@ class NLLBTranslator:
             )
         )
 
-    # ==========================================================
-    # DNT TRANSLATION
-    # ==========================================================
-
     def _translate_dnt_batch(
         self,
         texts: Sequence[str],
@@ -361,16 +429,17 @@ class NLLBTranslator:
             Sequence[str]
         ],
     ) -> list[str]:
+        """Translate text while preserving DNT terms."""
 
-        protected_texts = []
-
-        mappings = []
+        protected_texts: list[str] = []
+        mappings: list[
+            dict[str, str]
+        ] = []
 
         for text, terms in zip(
             texts,
             protected_terms,
         ):
-
             protected, mapping = (
                 self._protect_text(
                     text,
@@ -388,45 +457,26 @@ class NLLBTranslator:
                 mapping
             )
 
-        # ------------------------------------------------------
-        # If no actual DNT term occurs in any item, use the
-        # ordinary translation path.
-        # ------------------------------------------------------
-
         if not any(mappings):
-
             return self._generate_batch(
                 texts,
                 source_lang,
                 target_lang,
             )
 
-        # ------------------------------------------------------
-        # Translate the COMPLETE sentences.
-        # ------------------------------------------------------
-
-        translated = (
-            self._generate_batch(
-                protected_texts,
-                source_lang,
-                target_lang,
-            )
+        translated = self._generate_batch(
+            protected_texts,
+            source_lang,
+            target_lang,
         )
 
-        if len(translated) != len(
-            texts
-        ):
-
+        if len(translated) != len(texts):
             raise ValueError(
                 "NLLB returned an unexpected "
                 "number of translations."
             )
 
-        outputs = []
-
-        # ------------------------------------------------------
-        # Restore DNT terms.
-        # ------------------------------------------------------
+        outputs: list[str] = []
 
         for (
             source,
@@ -438,38 +488,9 @@ class NLLBTranslator:
             mappings,
         ):
 
-            missing = [
-                marker
-                for marker in mapping
-                if marker not in translation
-            ]
-
-            if missing:
-
-                # ------------------------------------------------
-                # IMPORTANT:
-                #
-                # Never silently return a translation where
-                # protected terms disappeared.
-                # ------------------------------------------------
-
-                missing_terms = [
-                    mapping[marker]
-                    for marker in missing
-                ]
-
-                raise ValueError(
-                    "NLLB modified or removed "
-                    "protected DNT terms. "
-                    f"Missing: "
-                    f"{missing_terms}"
-                )
-
-            restored = (
-                self._restore_text(
-                    translation,
-                    mapping,
-                )
+            restored = self._restore_text(
+                translation,
+                mapping,
             )
 
             validate_dnt_preservation(
@@ -484,10 +505,6 @@ class NLLBTranslator:
 
         return outputs
 
-    # ==========================================================
-    # PUBLIC API
-    # ==========================================================
-
     def translate_batch(
         self,
         texts: Sequence[str],
@@ -497,6 +514,12 @@ class NLLBTranslator:
             Sequence[str]
         ] | None = None,
     ) -> list[str]:
+        """
+        Translate a sequence of text values.
+
+        When DNT terms are supplied, terms found in each input text
+        are protected and restored after NLLB translation.
+        """
 
         if not texts:
             return []
@@ -511,93 +534,43 @@ class NLLBTranslator:
                 "target_lang cannot be empty."
             )
 
-        outputs = []
-
-        # ------------------------------------------------------
-        # No DNT.
-        # ------------------------------------------------------
-
         if protected_terms is None:
+            return self._translate_normal_batches(
+                texts,
+                source_lang,
+                target_lang,
+            )
 
-            for start in range(
-                0,
-                len(texts),
-                self.batch_size,
-            ):
-
-                batch = list(
-                    texts[
-                        start:
-                        start + self.batch_size
-                    ]
-                )
-
-                outputs.extend(
-                    self._generate_batch(
-                        batch,
-                        source_lang,
-                        target_lang,
-                    )
-                )
-
-            return outputs
-
-        # ------------------------------------------------------
-        # Validate DNT input.
-        # ------------------------------------------------------
-
-        if len(protected_terms) != len(
-            texts
-        ):
-
+        if len(protected_terms) != len(texts):
             raise ValueError(
                 "protected_terms must contain "
                 "one list per text."
             )
 
-        # ------------------------------------------------------
-        # We need to keep each text's own DNT mapping.
-        #
-        # Therefore DNT-enabled batches are processed as
-        # individual items. This is slower, but correctness
-        # comes first.
-        # ------------------------------------------------------
+        outputs: list[str] = []
 
         for text, terms in zip(
             texts,
             protected_terms,
         ):
-
-            actual_terms = (
-                normalise_dnt_terms(
-                    terms
-                )
+            actual_terms = normalise_dnt_terms(
+                terms
             )
 
-            actual_occurrences = (
-                count_dnt_terms(
-                    text,
-                    actual_terms,
-                )
-            )
-
-            if not actual_occurrences:
-
-                translated = (
+            if not count_dnt_terms(
+                text,
+                actual_terms,
+            ):
+                outputs.extend(
                     self._generate_batch(
                         [text],
                         source_lang,
                         target_lang,
                     )
                 )
-
-                outputs.extend(
-                    translated
-                )
-
                 continue
 
-            translated = (
+            outputs.extend(
                 self._translate_dnt_batch(
                     [text],
                     source_lang,
@@ -606,8 +579,36 @@ class NLLBTranslator:
                 )
             )
 
+        return outputs
+
+    def _translate_normal_batches(
+        self,
+        texts: Sequence[str],
+        source_lang: str,
+        target_lang: str,
+    ) -> list[str]:
+        """Translate text using the configured batch size."""
+
+        outputs: list[str] = []
+
+        for start in range(
+            0,
+            len(texts),
+            self.batch_size,
+        ):
+            batch = list(
+                texts[
+                    start:
+                    start + self.batch_size
+                ]
+            )
+
             outputs.extend(
-                translated
+                self._generate_batch(
+                    batch,
+                    source_lang,
+                    target_lang,
+                )
             )
 
         return outputs

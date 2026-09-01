@@ -1,189 +1,547 @@
-# XLIFF NLLB Translator — Complete Codebase & Architecture Guide
+# XLIFF NLLB Translator — Codebase Guide
 
-## 1. Executive Summary
+This document describes the current implementation and the responsibility of each component.
 
-**XLIFF NLLB Translator** (`xliff-nllb-translator`) is a Python application designed to translate **XLIFF 1.2** localization documents using Meta's **NLLB (No Language Left Behind)** sequence-to-sequence neural translation models via Hugging Face `transformers` and `torch`.
+## 1. Architecture overview
 
-### Core Design Philosophy
-Translating XML files with Machine Translation models usually risks corrupting inline XML markup, tag ordering, element attributes, or XML namespaces. This codebase solves that by decoupling XML structure from textual content:
-1. **Source Preservation**: The original `<source>` element within each `<trans-unit>` is never mutated.
-2. **Structure Cloning**: `<target>` elements are created as exact structural deep clones of `<source>`.
-3. **Leaf Text Extraction**: Text is extracted from XML leaf nodes (handling both `.text` and `.tail` properties).
-4. **Decoupled Neural Translation**: Only plain text strings (or strings with synthetic markers) are sent to NLLB.
-5. **Exact Target Re-injection**: Translated text strings are injected back into the cloned target tree at exact text node positions, ensuring tags, `<g>` inline elements, IDs, and attributes remain intact.
+The application is divided into four main backend layers:
 
----
-
-## 2. Directory & Component Overview
-
+```text
+                XLIFF file
+                    |
+                    v
+                core.py
+          XML parsing/extraction
+                    |
+                    v
+             Translation tasks
+                    |
+                    v
+              pipeline.py
+           workflow orchestration
+                    |
+                    v
+                nllb.py
+           neural translation
+                    |
+                    v
+           translated text
+                    |
+                    v
+                core.py
+          target reconstruction
+                    |
+                    v
+          structural validation
+                    |
+                    v
+             output XLIFF
 ```
+
+DNT is handled separately:
+
+```text
+DNT input
+    |
+    v
+  dnt.py
+    |
+    v
+Find matching terms
+    |
+    v
+  nllb.py
+    |
+    v
+Temporary placeholders
+    |
+    v
+NLLB translation
+    |
+    v
+Restore original terms
+    |
+    v
+Validate DNT preservation
+```
+
+The current implementation does not depend on the old `protection.py`, `deprotection.py`, or `segments.py` architecture.
+
+## 2. Directory structure
+
+```text
 xliff_translator/
-├── Create-functional-architecture.xlf  # Sample input XLIFF document
-├── README.md                            # High-level usage guide
-├── pyproject.toml                       # Package setup and entry points (xliff-translator CLI)
-├── requirements.txt                     # Core dependencies (lxml, transformers, torch, etc.)
-├── tests/                               # Pytest suite
-│   ├── fixture.xlf                      # Test XLIFF fixture file
-│   ├── test_protection.py               # Unit tests for marker generation & validation
-│   ├── test_deprotection.py             # Unit tests for stack-based XML target reconstruction
-│   └── test_reconstruction.py           # Integrity tests for XML tree cloning & preservation
-└── xliff_translator/                    # Core Python package
-    ├── __init__.py                      # Package metadata & version
-    ├── __main__.py                      # CLI entry point dispatch (`python -m xliff_translator`)
-    ├── cli.py                           # Argument parsing and command handlers (`inspect`, `translate`)
-    ├── core.py                          # Primary XML parsing, text location extraction & tree manipulation
-    ├── protection.py                    # Inline tag protection & marker generation
-    ├── deprotection.py                  # Stack-based XML target reconstruction from marked text
-    ├── segments.py                      # Alternative segment-based text extraction & marker handling
-    ├── nllb.py                          # Hugging Face PyTorch model loader & batched inferencing
-    ├── pipeline.py                      # End-to-end orchestration pipeline
-    └── web/                             # Web UI application
-        ├── __init__.py                  # Web package marker
-        ├── app.py                       # FastAPI application & REST API endpoints
-        └── static/                      # Static web assets
-            ├── index.html               # Frontend HTML UI
-            ├── style.css                # Visual design stylesheet
-            └── app.js                   # Frontend drag-and-drop & API fetch handler
+├── README.md
+├── CODEBASE_GUIDE.md
+├── pyproject.toml
+├── requirements.txt
+├── tests/
+│   ├── fixture.xlf
+│   ├── test_dnt.py
+│   ├── test_reconstruction.py
+│   └── other tests
+└── xliff_translator/
+    ├── __init__.py
+    ├── __main__.py
+    ├── cli.py
+    ├── core.py
+    ├── dnt.py
+    ├── nllb.py
+    ├── pipeline.py
+    └── web/
+        ├── __init__.py
+        ├── app.py
+        └── static/
+            ├── index.html
+            ├── app.js
+            └── style.css
 ```
 
----
+## 3. core.py
 
-## 3. High-Level System Architecture & Flow
+`core.py` contains the low-level XLIFF/XML functionality.
 
-```mermaid
-graph TD
-    A["Input XLIFF File (.xlf)"] --> B["parse_xliff() (core.py)"]
-    B --> C["find_trans_units() (core.py)"]
-    C --> D["build_translation_tasks() (core.py)"]
-    D --> E["NLLBTranslator.translate_batch() (nllb.py)"]
-    E --> F["Translated Text Batches"]
-    C --> G["clone_source() (core.py)"]
-    G --> H["build_translation_target() (core.py)"]
-    F --> H
-    H --> I["replace_or_add_target() (core.py)"]
-    I --> J["validate_translation_tree() (core.py)"]
-    J --> K["write_xliff() (core.py)"]
-    K --> L["Output Translated XLIFF File"]
+Responsibilities:
+
+- Parse XLIFF files.
+- Find `trans-unit`, `source`, and `target` elements.
+- Identify text locations.
+- Create translation tasks.
+- Deep-copy source structures.
+- Apply translated text to copied structures.
+- Add or replace target elements.
+- Validate structural integrity.
+- Write translated XLIFF files.
+- Provide the `inspect` development utility.
+
+XML text can occur in both:
+
+```text
+element.text
+element.tail
 ```
 
----
+The application tracks these locations so translated strings can be returned to the correct structural positions.
 
-## 4. File-by-File & Function-by-Function Breakdown
+## 4. Translation tasks
 
-### 4.1 CLI & Entry Points
+A translation task associates text with its original location:
 
-#### [`xliff_translator/__main__.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/__main__.py)
-- **Role**: Entry point when invoking the package as a module (`python -m xliff_translator`).
-- **Calls**: [`main()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py#L164-L170) from [`cli.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py).
+```text
+TranslationTask
+├── unit_index
+├── location_index
+└── text
+```
 
-#### [`xliff_translator/cli.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py)
-- **Role**: Parses command-line arguments and dispatches commands.
-- **Key Functions**:
-  - [`cmd_inspect(args)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py#L17-L26): Calls [`inspect_xliff()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L205-L282) and outputs a human-readable list of trans-units and text leaves.
-  - [`cmd_translate(args)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py#L28-L64): Instantiates [`NLLBTranslator`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py#L11-L284), maps short language codes (`en`, `fr`, `de`) to NLLB codes (`eng_Latn`, `fra_Latn`, `deu_Latn`), and invokes [`translate_file()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/pipeline.py#L24-L321).
-  - [`build_parser()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py#L67-L161): Defines CLI subparsers (`inspect` and `translate`) and flags (`--langs`, `--model`, `--output-dir`, `--batch-size`).
-  - [`main()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/cli.py#L164-L170): Parses `sys.argv` and executes the attached default command function.
+This mapping prevents translated text from being inserted into the wrong XML location.
 
----
+## 5. XML preservation strategy
 
-### 4.2 Core XML Primitive Operations
+The original source is never modified.
 
-#### [`xliff_translator/core.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py)
-- **Role**: Fundamental XML tree parser, XPath querying, leaf text traversal, target cloning, and validation.
-- **Classes**:
-  - [`TranslationTask`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L13-L30): `@dataclass` holding `unit_index`, `location_index`, and `text` to be translated.
-  - [`TextLocation`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L285-L326): Wraps an XML element and an attribute name (`"text"` or `"tail"`), exposing `.text` getter/setter.
-- **Key Functions**:
-  - [`parse_xliff(path)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L33-L53): Parses XML with `lxml.etree.XMLParser` configured to preserve blank text, CDATA, comments, and entities.
-  - [`find_trans_units(tree)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L56-L65): Uses XPath `//*[local-name()='trans-unit']` to get all translation units.
-  - [`get_unit_id(trans_unit)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L68-L78): Safely returns `id` attribute.
-  - [`find_source(trans_unit)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L81-L92): Locates `<source>` element inside a unit.
-  - [`find_target(trans_unit)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L95-L106): Locates `<target>` element inside a unit.
-  - [`replace_or_add_target(trans_unit, target_content)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L109-L202): Replaces existing `<target>` or inserts new `<target>` directly following `<source>`.
-  - [`inspect_xliff(path)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L205-L282): Generates formatted text strings showing unit indexes and leaf node contents.
-  - [`iter_text_locations(element)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L327-L379): Recursively walks XML subtree to find all `.text` and `.tail` occurrences.
-  - [`build_translation_tasks(tree)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L381-L428): Generates `TranslationTask` items for all text locations across all `<trans-unit>` sources.
-  - [`clone_source(source)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L431-L462): Performs `deepcopy` of `<source>` and changes tag name to `target` (preserving namespace prefix).
-  - [`apply_leaf_translations(target, source, translated_segments)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L465-L508): Replaces `.text`/`.tail` in target with translated strings.
-  - [`build_translation_target(source, translated_segments)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L510-L537): Combines [`clone_source`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L431-L462) and [`apply_leaf_translations`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L465-L508).
-  - [`validate_translation_tree(original_tree, translated_tree)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L540-L626): Verifies trans-unit count, IDs, and source element XML structure equality.
-  - [`write_xliff(tree, path)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L628-L649): Serializes XML tree to UTF-8 file with XML declaration.
+```text
+Original XLIFF
+     |
+     +----------------------+
+     |                      |
+     v                      v
+Original tree          Working tree
+     |                      |
+     |                      v
+     |                Clone source
+     v                      |
+Extract text                |
+     |                      |
+     v                      |
+Translate text              |
+     |                      |
+     +----------+-----------+
+                |
+                v
+       Insert translated text
+                |
+                v
+        Validate structure
+                |
+                v
+           Write output
+```
 
----
+The working target is based on a deep copy of the source structure.
 
-### 4.3 Neural Translation Backend
+This preserves:
 
-#### [`xliff_translator/nllb.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py)
-- **Role**: Interfaces with Meta's NLLB model via Hugging Face `transformers`.
-- **Classes**:
-  - [`NLLBTranslator`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py#L11-L284): `@dataclass` holding model settings (`facebook/nllb-200-distilled-600M`), device selection (`cuda` vs `cpu`), token limits, batch size, and beam count.
-- **Key Methods**:
-  - [`__post_init__()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py#L26-L142): Detects CUDA availability, prints GPU memory details, selects `float16` for CUDA / `float32` for CPU, and loads tokenizer and `AutoModelForSeq2SeqLM`.
-  - [`translate_batch(texts, source_lang, target_lang)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py#L144-L284): Sets `src_lang`, tokenizes batch, executes `model.generate` (using `autocast(device_type="cuda")` if GPU), decodes output tokens, and returns translated strings.
+- element hierarchy
+- element names
+- attributes
+- IDs
+- inline XML elements
+- ordering
 
----
+Only textual values are replaced.
 
-### 4.4 Translation Pipeline Orchestration
+## 6. dnt.py
 
-#### [`xliff_translator/pipeline.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/pipeline.py)
-- **Role**: Coordinates reading input XLIFF files, creating tasks, batching NLLB inference, reconstructing target XML elements, validating outputs, and writing translated XLIFF files.
-- **Key Functions**:
-  - [`translate_file(input_path, output_dir, languages, translator)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/pipeline.py#L24-L321): Complete workflow loop for each target language:
-    1. Parses two trees (`original_tree` and `working_tree`).
-    2. Builds translation tasks via [`build_translation_tasks`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L381-L428).
-    3. Translates tasks in batches using [`translator.translate_batch`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/nllb.py#L144-L284) with `tqdm` progress visualization.
-    4. Rebuilds translated `<target>` elements for each unit.
-    5. Replaces/adds target elements in `working_tree`.
-    6. Validates structure integrity via [`validate_translation_tree`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/core.py#L540-L626).
-    7. Writes output to file (`{stem}.{language}.xlf`).
+`dnt.py` implements Do Not Translate functionality.
 
----
+Responsibilities:
 
-### 4.5 Protection & Deprotection Systems
+- Load DNT terms from text files.
+- Normalize DNT terms.
+- Find DNT terms in source text.
+- Identify matching spans.
+- Count matches.
+- Validate final DNT preservation.
 
-#### [`xliff_translator/protection.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/protection.py)
-- **Role**: Converts inline XML nodes (such as `<g id="1">`) into synthetic string markers (e.g. `[[XLIFF_G_1_0_START]]` ... `[[XLIFF_G_1_0_END]]`) so NLLB translates text surrounding inline formatting tags without corrupting markup.
-- **Key Functions**:
-  - [`_marker_name(element, index)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/protection.py#L39-L57): Generates deterministic marker keys.
-  - [`protect_source(source)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/protection.py#L59-L108): Traverses XML nodes, embedding start/end string markers into a unified string.
-  - [`validate_markers(translated_text, protected)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/protection.py#L111-L136): Asserts all protected markers exist in translated string output.
+DNT terms can be words or phrases.
 
-#### [`xliff_translator/deprotection.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/deprotection.py)
-- **Role**: Reconstructs XML tree structure from model output containing synthetic inline element markers.
-- **Key Functions**:
-  - [`reconstruct_target(source, translated, protected)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/deprotection.py#L138-L400): Stack-based parser that scans string markers (`MARKER_RE`), pushes/pops frame stacks for nested `<g>` tags, and populates XML element text and tail.
-  - [`_flush_frame_text(frame)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/deprotection.py#L403-L451): Assigns frame text buffer to `element.text` or `last_child.tail`.
-  - [`_find_corresponding_element(source_root, target_root, source_element)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/deprotection.py#L453-L495): Finds target tree node using structural index path matching.
+Example:
 
-#### [`xliff_translator/segments.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/segments.py)
-- **Role**: Alternative text protection strategy module using segment-level boundary markers `XLFSEG0000A` and `XLFSEG0000B`.
-- **Key Functions**:
-  - [`make_translation_job(unit_id, source)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/segments.py#L107-L132): Wraps leaf locations into a single `TranslationJob`.
-  - [`build_protected_text(job)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/segments.py#L135-L167): Formats text with segment markers.
-  - [`extract_protected_segments(translated, expected_count)`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/segments.py#L169-L222): Extracts translated segments from between markers.
+```text
+START
+RFLP
+3DEXPERIENCE
+True
+False
+Logical connections
+Congratulations!
+```
 
----
+A protected term is temporarily replaced by a synthetic placeholder before NLLB translation.
 
-### 4.6 Web UI Application
+After translation, the placeholder is recognized and replaced with the original DNT term.
 
-#### [`xliff_translator/web/app.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/web/app.py)
-- **Role**: FastAPI web server providing web browser UI and REST endpoints.
-- **Endpoints**:
-  - `GET /`: Returns [`static/index.html`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/web/static/index.html).
-  - `GET /api/health`: JSON health check.
-  - `POST /api/translate`: Handles multipart file upload (`.xlf`/`.xliff`), language parameters, invokes [`translate_file()`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/pipeline.py#L24-L321), saves results to `web_data/outputs/{job_id}/`, and returns download URLs.
-  - `GET /api/download/{job_id}/{filename}`: Downloads translated output file with security path traversal validation (`Path(filename).name`).
+The original term is restored exactly.
 
-#### Static Frontend Assets
-- **[`xliff_translator/web/static/index.html`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/web/static/index.html)**: Clean HTML page with drag-and-drop file uploader, language checkboxes (FR, DE, EN), model select dropdown, and progress indicator.
-- **[`xliff_translator/web/static/style.css`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/web/static/style.css)**: Modern styling (gradient backgrounds, drop zones, buttons, status indicators).
-- **[`xliff_translator/web/static/app.js`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/xliff_translator/web/static/app.js)**: Event handlers for file drag-and-drop, form validation, AJAX POST request to `/api/translate`, loading spinner display, and dynamic download link insertion.
+If the protected term cannot be reliably restored, translation fails.
 
----
+## 7. nllb.py
 
-## 5. Test Suite
+`nllb.py` provides the NLLB inference engine.
 
-The codebase features comprehensive unit tests using `pytest`:
-1. **[`tests/test_protection.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/tests/test_protection.py)**: Tests plain text preservation, single `<g>` protection, nested `<g>` elements protection, tail text preservation, and marker validation.
-2. **[`tests/test_deprotection.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/tests/test_deprotection.py)**: Tests target XML reconstruction from protected marker text, attribute preservation, and non-mutation of source elements.
-3. **[`tests/test_reconstruction.py`](file:///c:/Users/svc_3dxlabuser/Desktop/xliff_translator/tests/test_reconstruction.py)**: Runs structural validation on `Create-functional-architecture.xlf` using fake translation strings to verify trans-unit counts, unit IDs, tag attributes, inline element hierarchy, and exact XML matching.
+The main class is:
+
+```text
+NLLBTranslator
+```
+
+Responsibilities:
+
+- Select CPU or CUDA.
+- Load the tokenizer.
+- Load the NLLB model.
+- Configure model precision.
+- Tokenize batches.
+- Generate translations.
+- Decode generated tokens.
+- Handle DNT placeholders.
+- Restore DNT terms.
+- Validate DNT preservation.
+
+Default model:
+
+```text
+facebook/nllb-200-distilled-600M
+```
+
+When `device="auto"`, CUDA is selected when available; otherwise CPU is used.
+
+## 8. DNT placeholder behavior
+
+NLLB is a translation model, so DNT terms are temporarily replaced before translation.
+
+Example:
+
+```text
+Original:
+Congratulations! You have completed this lesson.
+
+Protected:
+XliffProtectedTermZero You have completed this lesson.
+```
+
+NLLB may insert whitespace inside the synthetic placeholder:
+
+```text
+Xliff ProtectedTermZero
+```
+
+The restoration logic accounts for whitespace changes inside the placeholder.
+
+The original term is then restored:
+
+```text
+Congratulations! Vous avez terminé cette leçon.
+```
+
+The final result is validated to ensure the DNT term remains present.
+
+## 9. pipeline.py
+
+`pipeline.py` is the orchestration layer.
+
+It coordinates:
+
+1. Loading the input XLIFF.
+2. Loading DNT terms.
+3. Creating translation tasks.
+4. Sending batches to NLLB.
+5. Mapping translations back to XML locations.
+6. Rebuilding target structures.
+7. Validating translated XML.
+8. Writing output files.
+
+Conceptually:
+
+```text
+translate_file()
+       |
+       +--> load DNT terms
+       |
+       +--> parse original tree
+       |
+       +--> parse working tree
+       |
+       +--> build translation tasks
+       |
+       +--> translate tasks
+       |
+       +--> rebuild targets
+       |
+       +--> validate translation tree
+       |
+       +--> write output
+```
+
+The pipeline delegates low-level XML operations to `core.py` and neural inference/DNT protection to `nllb.py`.
+
+## 10. cli.py
+
+`cli.py` provides the command-line interface.
+
+Current commands:
+
+```text
+inspect
+translate
+```
+
+Responsibilities:
+
+- Parse command-line arguments.
+- Map short language codes to NLLB language codes.
+- Configure the translator.
+- Invoke the pipeline.
+- Report errors and progress.
+
+## 11. __main__.py
+
+Provides module execution support:
+
+```powershell
+python -m xliff_translator
+```
+
+It dispatches to the CLI.
+
+## 12. Web application
+
+The web application is under:
+
+```text
+xliff_translator/web/
+```
+
+### app.py
+
+FastAPI application responsible for:
+
+- Serving the GUI.
+- Receiving XLIFF uploads.
+- Receiving language selections.
+- Receiving model settings.
+- Receiving DNT terms.
+- Receiving optional DNT files.
+- Starting translations.
+- Saving output files.
+- Providing download endpoints.
+- Returning API responses.
+
+Current endpoints include:
+
+```text
+GET  /
+GET  /api/health
+POST /api/translate
+GET  /api/download/{job_id}/{filename}
+```
+
+### static/index.html
+
+Defines the GUI structure for:
+
+- XLIFF upload
+- target language selection
+- model selection
+- DNT term entry
+- optional DNT file upload
+- translation status
+- output downloads
+
+### static/app.js
+
+Handles:
+
+- File selection
+- Drag and drop
+- DNT term input
+- DNT file selection
+- Form submission
+- Loading state
+- API requests
+- Success handling
+- Error handling
+- Download links
+
+### static/style.css
+
+Contains frontend styling.
+
+## 13. Validation
+
+Before output is written, the translated XML tree is validated against the original tree.
+
+Validation is intended to catch:
+
+- changed trans-unit count
+- changed IDs
+- changed source structures
+- changed element hierarchy
+- changed attributes
+- unexpected structural differences
+
+The application should not report a successful output when structural validation fails.
+
+## 14. CLI inspect utility
+
+The `inspect` command is a development utility for examining an XLIFF without loading NLLB.
+
+Example:
+
+```powershell
+python -m xliff_translator inspect input.xlf
+```
+
+It can show:
+
+- translation-unit IDs
+- source content
+- text locations
+- `.text` and `.tail` values
+
+`inspect.txt` is not required by the application. It is only a possible saved output/scratch file.
+
+## 15. Testing
+
+Run all tests:
+
+```powershell
+python -m pytest -q
+```
+
+The test suite covers the implemented behavior, including:
+
+- DNT loading and normalization
+- DNT matching
+- DNT preservation
+- DNT restoration
+- translation-task mapping
+- XML reconstruction
+- source immutability
+- structural validation
+- IDs and attributes
+- inline XML structures
+
+## 16. Removed architecture
+
+The following modules belonged to an earlier design:
+
+```text
+protection.py
+deprotection.py
+segments.py
+```
+
+They are not part of the current translation flow.
+
+The current implementation uses:
+
+```text
+core.py
+dnt.py
+nllb.py
+pipeline.py
+```
+
+for XML handling, DNT handling, inference, and orchestration.
+
+## 17. Packaging
+
+`pyproject.toml` defines the Python package and CLI entry point.
+
+The CLI entry point is:
+
+```text
+xliff-translator
+```
+
+and maps to:
+
+```text
+xliff_translator.cli:main
+```
+
+Runtime dependencies are declared in the project configuration and requirements file.
+
+## 18. Runtime artifacts
+
+The following are local or generated artifacts:
+
+```text
+.venv/
+__pycache__/
+.pytest_cache/
+input/
+output/
+web_data/
+inspect.txt
+```
+
+They do not need to be included when distributing the application source.
+
+## 19. Design principles
+
+### Separate XML processing from translation
+
+NLLB operates on text while XML structure is managed separately.
+
+### Never mutate the original source
+
+The source tree is retained as the structural reference.
+
+### Preserve structure
+
+Targets are built from copies of source structures.
+
+### Protect explicit DNT terms
+
+Terms explicitly supplied as DNT must remain unchanged.
+
+### Fail safely
+
+If DNT preservation or structural validation fails, the application reports an error instead of silently producing an invalid result.
+
+### Keep responsibilities separated
+
+XML processing, DNT handling, neural inference, orchestration, and the web interface have separate responsibilities.
