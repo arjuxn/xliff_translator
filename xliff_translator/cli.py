@@ -51,6 +51,7 @@ def cmd_translate(
         output_dir=args.output_dir,
         languages=target_languages,
         translator=translator,
+        dnt_path=args.dnt_file,
     )
 
     print()
@@ -65,6 +66,7 @@ def cmd_translate(
 
 
 def build_parser():
+
     parser = argparse.ArgumentParser(
         prog="xliff_translator",
         description=(
@@ -80,9 +82,9 @@ def build_parser():
         )
     )
 
-    # --------------------------------------------------
+    # ==================================================
     # INSPECT
-    # --------------------------------------------------
+    # ==================================================
 
     inspect_parser = (
         subparsers.add_parser(
@@ -100,9 +102,9 @@ def build_parser():
         func=cmd_inspect
     )
 
-    # --------------------------------------------------
+    # ==================================================
     # TRANSLATE
-    # --------------------------------------------------
+    # ==================================================
 
     translate_parser = (
         subparsers.add_parser(
@@ -154,6 +156,15 @@ def build_parser():
         ),
     )
 
+    translate_parser.add_argument(
+        "--dnt-file",
+        default=None,
+        help=(
+            "Optional UTF-8 .txt file containing "
+            "one protected term per line."
+        ),
+    )
+
     translate_parser.set_defaults(
         func=cmd_translate
     )
@@ -162,6 +173,7 @@ def build_parser():
 
 
 def main():
+
     parser = build_parser()
 
     args = parser.parse_args()

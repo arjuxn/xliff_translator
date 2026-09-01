@@ -27,6 +27,7 @@ dist/
 
 # Tool output & scratch files
 output/
+input/
 xliff_translator/output/
 web_data/
 inspect.txt
