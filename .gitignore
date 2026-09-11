@@ -1,23 +1,31 @@
 # Python
+
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
+
 # Virtual environments
+
 .venv/
 venv/
 env/
 ENV/
 
+
 # Packaging / build artifacts
+
 build/
 dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
+packaging/installer-output/
+
 
 # Testing / coverage
+
 .pytest_cache/
 .coverage
 .coverage.*
@@ -28,35 +36,58 @@ htmlcov/
 .ruff_cache/
 .pyre/
 
+
 # IDE / editors
+
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
+
 # OS files
+
 .DS_Store
 Thumbs.db
 desktop.ini
 
+
 # Application-generated files
+
 output/
+outputs/
 web_data/
+logs/
 inspect.txt
 
+
 # Local input files
+
 input/
 
+
 # Logs
+
 *.log
 
+
 # Environment / secrets
+
 .env
 .env.*
 !.env.example
 
-# Local model/cache directories
+
+# Local model / cache directories
+
 models/
 model_cache/
 .cache/
+packaging/model/
+
+
+# PyInstaller
+
+*.manifest
+*.spec.bak

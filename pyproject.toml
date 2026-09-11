@@ -2,11 +2,13 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+
 [project]
 name = "xliff-nllb-translator"
-version = "0.1.0"
-description = "Local XLIFF 1.2 translator using NLLB with XML structure and DNT preservation."
+version = "1.0.0"
+description = "Local XLIFF 1.2 translation application using NLLB with XML structure and Do Not Translate preservation."
 requires-python = ">=3.10"
+
 dependencies = [
     "lxml>=5.3,<7",
     "transformers>=4.45,<5",
@@ -19,8 +21,10 @@ dependencies = [
     "python-multipart",
 ]
 
+
 [project.scripts]
 xliff-translator = "xliff_translator.cli:main"
+
 
 [tool.setuptools.packages.find]
 include = ["xliff_translator*"]

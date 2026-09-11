@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import shutil
+import sys
 import uuid
 from pathlib import Path
 
@@ -31,18 +33,200 @@ NLLB_LANGUAGES = {
 
 
 # ============================================================
+# BUILD MODE
+# ============================================================
+
+CUSTOMER_BUILD = (
+    os.environ.get(
+        "XLIFF_CUSTOMER_BUILD"
+    )
+    == "1"
+)
+
+
+# ============================================================
 # DIRECTORIES
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(
+    __file__
+).resolve().parent
 
-STATIC_DIR = BASE_DIR / "static"
+STATIC_DIR = (
+    BASE_DIR
+    / "static"
+)
 
-DATA_DIR = BASE_DIR.parent.parent / "web_data"
 
-UPLOAD_DIR = DATA_DIR / "uploads"
+# ============================================================
+# CUSTOMER MODEL LOCATION
+# ============================================================
 
-OUTPUT_DIR = DATA_DIR / "outputs"
+MODEL_NAME = (
+    "nllb-200-distilled-600M"
+)
+
+
+def _find_bundled_model() -> Path:
+    """
+    Locate the bundled NLLB model inside a PyInstaller
+    customer build.
+
+    In a PyInstaller onedir application:
+
+        XLIFF Translator/
+        ├── XLIFF Translator.exe
+        └── _internal/
+            ├── model/
+            │   └── nllb-200-distilled-600M/
+            └── ...
+
+    PyInstaller exposes the _internal directory through
+    sys._MEIPASS at runtime.
+
+    We therefore prefer sys._MEIPASS instead of constructing
+    the path manually from sys.executable.
+    """
+
+    candidates: list[Path] = []
+
+    # --------------------------------------------------------
+    # Preferred PyInstaller runtime location.
+    # --------------------------------------------------------
+
+    meipass = getattr(
+        sys,
+        "_MEIPASS",
+        None,
+    )
+
+    if meipass:
+
+        candidates.append(
+            Path(meipass)
+            / "model"
+            / MODEL_NAME
+        )
+
+    # --------------------------------------------------------
+    # Normal onedir fallback.
+    #
+    # This protects us if _MEIPASS is unavailable for some
+    # reason.
+    # --------------------------------------------------------
+
+    executable_dir = (
+        Path(sys.executable)
+        .resolve()
+        .parent
+    )
+
+    candidates.append(
+        executable_dir
+        / "_internal"
+        / "model"
+        / MODEL_NAME
+    )
+
+    # --------------------------------------------------------
+    # Additional fallback for development/testing.
+    # --------------------------------------------------------
+
+    candidates.append(
+        executable_dir
+        / "model"
+        / MODEL_NAME
+    )
+
+    # --------------------------------------------------------
+    # Return the first valid model directory.
+    # --------------------------------------------------------
+
+    for candidate in candidates:
+
+        if candidate.is_dir():
+
+            return candidate
+
+    # --------------------------------------------------------
+    # Return the preferred path for a useful error message.
+    # --------------------------------------------------------
+
+    if candidates:
+
+        return candidates[0]
+
+    raise RuntimeError(
+        "Unable to determine the bundled "
+        "NLLB model location."
+    )
+
+
+def _get_model_name(
+    requested_model: str,
+) -> str:
+    """
+    Determine which model should be used.
+
+    Developer build:
+        Use the model supplied by the UI.
+
+    Customer build:
+        Always use the bundled 600M model.
+
+    This prevents a customer installation from attempting
+    to download or locate another Hugging Face model.
+    """
+
+    if CUSTOMER_BUILD:
+
+        bundled_model = (
+            _find_bundled_model()
+        )
+
+        if not bundled_model.is_dir():
+
+            raise RuntimeError(
+                "The bundled NLLB model was not found at: "
+                f"{bundled_model}"
+            )
+
+        return str(
+            bundled_model
+        )
+
+    return requested_model
+
+
+# ============================================================
+# CUSTOMER DATA DIRECTORY
+# ============================================================
+
+if CUSTOMER_BUILD:
+
+    DATA_DIR = (
+        Path.home()
+        / "Documents"
+        / "XLIFF Translator"
+    )
+
+else:
+
+    DATA_DIR = (
+        BASE_DIR.parent.parent
+        / "web_data"
+    )
+
+
+UPLOAD_DIR = (
+    DATA_DIR
+    / "uploads"
+)
+
+OUTPUT_DIR = (
+    DATA_DIR
+    / "outputs"
+)
 
 
 UPLOAD_DIR.mkdir(
@@ -89,8 +273,10 @@ app.mount(
 
 @app.get("/")
 def index():
+
     return FileResponse(
-        STATIC_DIR / "index.html"
+        STATIC_DIR
+        / "index.html"
     )
 
 
@@ -100,6 +286,7 @@ def index():
 
 @app.get("/api/health")
 def health():
+
     return {
         "status": "ok",
         "service": "xliff-translator",
@@ -107,7 +294,7 @@ def health():
 
 
 # ============================================================
-# HELPERS
+# LANGUAGE HELPERS
 # ============================================================
 
 def _parse_languages(
@@ -125,6 +312,7 @@ def _parse_languages(
     ]
 
     if not requested:
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -142,10 +330,16 @@ def _parse_languages(
             language,
         )
 
-        result.append(mapped)
+        result.append(
+            mapped
+        )
 
     return result
 
+
+# ============================================================
+# DNT HELPERS
+# ============================================================
 
 def _normalise_typed_terms(
     dnt_terms: str,
@@ -165,19 +359,27 @@ def _normalise_typed_terms(
 
     seen: set[str] = set()
 
-    for raw_line in dnt_terms.splitlines():
+    for raw_line in (
+        dnt_terms.splitlines()
+    ):
 
         term = raw_line.strip()
 
         if not term:
+
             continue
 
         if term in seen:
+
             continue
 
-        seen.add(term)
+        seen.add(
+            term
+        )
 
-        terms.append(term)
+        terms.append(
+            term
+        )
 
     return terms
 
@@ -206,8 +408,10 @@ def _combine_dnt_sources(
 
         try:
 
-            uploaded_terms = load_dnt_terms(
-                uploaded_dnt_path
+            uploaded_terms = (
+                load_dnt_terms(
+                    uploaded_dnt_path
+                )
             )
 
         except (
@@ -223,11 +427,16 @@ def _combine_dnt_sources(
         for term in uploaded_terms:
 
             if term in seen:
+
                 continue
 
-            seen.add(term)
+            seen.add(
+                term
+            )
 
-            combined_terms.append(term)
+            combined_terms.append(
+                term
+            )
 
     # --------------------------------------------------------
     # Manually entered terms.
@@ -238,17 +447,23 @@ def _combine_dnt_sources(
     ):
 
         if term in seen:
+
             continue
 
-        seen.add(term)
+        seen.add(
+            term
+        )
 
-        combined_terms.append(term)
+        combined_terms.append(
+            term
+        )
 
     # --------------------------------------------------------
     # Nothing supplied.
     # --------------------------------------------------------
 
     if not combined_terms:
+
         return None
 
     # --------------------------------------------------------
@@ -256,7 +471,10 @@ def _combine_dnt_sources(
     # --------------------------------------------------------
 
     destination.write_text(
-        "\n".join(combined_terms) + "\n",
+        "\n".join(
+            combined_terms
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -294,7 +512,9 @@ async def translate(
 
         raise HTTPException(
             status_code=400,
-            detail="No XLIFF file was provided.",
+            detail=(
+                "No XLIFF file was provided."
+            ),
         )
 
     original_filename = Path(
@@ -302,7 +522,10 @@ async def translate(
     ).name
 
     if not original_filename.lower().endswith(
-        (".xlf", ".xliff")
+        (
+            ".xlf",
+            ".xliff",
+        )
     ):
 
         raise HTTPException(
@@ -316,8 +539,10 @@ async def translate(
     # Languages.
     # --------------------------------------------------------
 
-    target_languages = _parse_languages(
-        languages
+    target_languages = (
+        _parse_languages(
+            languages
+        )
     )
 
     # --------------------------------------------------------
@@ -327,11 +552,13 @@ async def translate(
     job_id = uuid.uuid4().hex
 
     job_upload_dir = (
-        UPLOAD_DIR / job_id
+        UPLOAD_DIR
+        / job_id
     )
 
     job_output_dir = (
-        OUTPUT_DIR / job_id
+        OUTPUT_DIR
+        / job_id
     )
 
     job_upload_dir.mkdir(
@@ -353,7 +580,9 @@ async def translate(
         / original_filename
     )
 
-    with input_path.open("wb") as buffer:
+    with input_path.open(
+        "wb"
+    ) as buffer:
 
         shutil.copyfileobj(
             file.file,
@@ -408,7 +637,10 @@ async def translate(
                 buffer,
             )
 
-        # Validate immediately.
+        # ----------------------------------------------------
+        # Validate uploaded DNT file.
+        # ----------------------------------------------------
+
         try:
 
             load_dnt_terms(
@@ -436,13 +668,20 @@ async def translate(
 
     try:
 
-        dnt_path = _combine_dnt_sources(
-            uploaded_dnt_path=uploaded_dnt_path,
-            typed_terms=dnt_terms,
-            destination=combined_dnt_path,
+        dnt_path = (
+            _combine_dnt_sources(
+                uploaded_dnt_path=(
+                    uploaded_dnt_path
+                ),
+                typed_terms=dnt_terms,
+                destination=(
+                    combined_dnt_path
+                ),
+            )
         )
 
     except HTTPException:
+
         raise
 
     except Exception as exc:
@@ -450,9 +689,28 @@ async def translate(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unable to process protected terms: "
+                "Unable to process protected terms: "
                 f"{exc}"
             ),
+        ) from exc
+
+    # --------------------------------------------------------
+    # Resolve translation model.
+    # --------------------------------------------------------
+
+    try:
+
+        model_path = (
+            _get_model_name(
+                model
+            )
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
         ) from exc
 
     # --------------------------------------------------------
@@ -462,7 +720,7 @@ async def translate(
     try:
 
         translator = NLLBTranslator(
-            model_name=model,
+            model_name=model_path,
             batch_size=4,
         )
 
@@ -502,6 +760,7 @@ async def translate(
             )
 
         except Exception:
+
             dnt_count = 0
 
     # --------------------------------------------------------
@@ -522,12 +781,14 @@ async def translate(
         "files": [
             {
                 "name": output.name,
+
                 "url": (
                     f"/api/download/"
                     f"{job_id}/"
                     f"{output.name}"
                 ),
             }
+
             for output in outputs
         ],
     }
@@ -546,10 +807,14 @@ def download(
 ):
 
     job_output_dir = (
-        OUTPUT_DIR / job_id
+        OUTPUT_DIR
+        / job_id
     )
 
+    # --------------------------------------------------------
     # Prevent path traversal.
+    # --------------------------------------------------------
+
     safe_filename = Path(
         filename
     ).name
@@ -563,14 +828,18 @@ def download(
 
         raise HTTPException(
             status_code=404,
-            detail="Output file not found.",
+            detail=(
+                "Output file not found."
+            ),
         )
 
     if not file_path.is_file():
 
         raise HTTPException(
             status_code=404,
-            detail="Output file not found.",
+            detail=(
+                "Output file not found."
+            ),
         )
 
     return FileResponse(
