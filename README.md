@@ -16,8 +16,6 @@ The project has two main use cases:
 
 The application takes an XLIFF 1.2 file, translates its translatable text into the selected target language, and produces a new translated XLIFF file.
 
-The original input file is not modified.
-
 The application also allows specific terms to be protected from translation using DNT (Do Not Translate) terms.
 
 For example:
@@ -44,17 +42,6 @@ XLIFF-Translator-Setup.exe
 Run the installer and follow the installation steps.
 
 After installation, XLIFF Translator can be launched from the Start Menu or from the desktop shortcut if one was created during installation.
-
-The customer does not need to install or configure:
-
-* Python
-* pip
-* Git
-* PyTorch
-* Hugging Face
-* FastAPI
-* Uvicorn
-* The NLLB model
 
 The required translation model is bundled with the application.
 
@@ -116,12 +103,6 @@ the translated result can be:
 Congratulations! Vous avez terminé cette leçon.
 ```
 
-The surrounding sentence is translated while the protected term is restored unchanged.
-
-DNT matching is boundary-aware, so a protected term is not unnecessarily matched as part of another word.
-
-If a protected term cannot be safely preserved, the translation fails instead of silently changing the protected term.
-
 ## DNT text file
 
 DNT terms can also be provided through a plain-text `.txt` file.
@@ -131,70 +112,13 @@ Example:
 ```text
 START
 RFLP
-3DEXPERIENCE
 True
 False
-Logical connections
-Congratulations!
 ```
 
 Use one term per line. Blank lines are ignored.
 
 Terms entered directly in the GUI and terms provided through the `.txt` file are combined.
-
-## Output files
-
-Translated files are stored under the user's Documents directory.
-
-The application uses the following general structure:
-
-```text
-Documents\
-└── XLIFF Translator\
-    └── outputs\
-        └── <translation-job>\
-            └── translated-file.fra_Latn.xlf
-```
-
-The exact filename and language code depend on the input file and selected target language.
-
-The original input file is never overwritten.
-
-## Local processing
-
-Translation is performed locally on the customer's machine.
-
-The NLLB model used by the customer build is:
-
-```text
-facebook/nllb-200-distilled-600M
-```
-
-The model is bundled with the Windows application, so the customer does not need an internet connection to download the model or configure a Hugging Face account.
-
-The application can run using the CPU. The development version also supports NVIDIA CUDA when a compatible PyTorch/CUDA environment is available.
-
-## XLIFF and XML preservation
-
-Preserving the XLIFF structure is one of the main design requirements of the project.
-
-The original `<source>` elements are not modified.
-
-For translated content, the application creates the target from the source structure and replaces only the textual values that need to be translated.
-
-The following are preserved:
-
-* XML element hierarchy
-* Element names
-* Attributes
-* Translation-unit IDs
-* Inline elements
-* Element ordering
-* Original source content
-
-The reconstructed document is validated before the translated file is written.
-
-The application does not guarantee byte-for-byte preservation of the original XML file. XML serialization can normalize insignificant formatting such as whitespace.
 
 # Developer Documentation
 
