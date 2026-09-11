@@ -1,42 +1,93 @@
-# Byte-compiled / optimized / DLL files
+# Python
+
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
-# Virtual Environments
+
+# Virtual environments
+
 .venv/
 venv/
-ENV/
 env/
+ENV/
 
-# Testing & Coverage
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-.hypothesis/
 
-# Packaging & Build output
+# Packaging / build artifacts
+
 build/
 dist/
 *.egg-info/
-*.egg
-*.manifest
-*.spec
+.eggs/
+pip-wheel-metadata/
+packaging/installer-output/
 
-# Tool output & scratch files
-output/
-xliff_translator/output/
-inspect.txt
-*.log
 
-# IDEs and Editors
+# Testing / coverage
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+
+# IDE / editors
+
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS generated files
+
+# OS files
+
 .DS_Store
 Thumbs.db
+desktop.ini
+
+
+# Application-generated files
+
+output/
+outputs/
+web_data/
+logs/
+inspect.txt
+
+
+# Local input files
+
+input/
+
+
+# Logs
+
+*.log
+
+
+# Environment / secrets
+
+.env
+.env.*
+!.env.example
+
+
+# Local model / cache directories
+
+models/
+model_cache/
+.cache/
+packaging/model/
+
+
+# PyInstaller
+
+*.manifest
+*.spec.bak
