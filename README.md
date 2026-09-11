@@ -1,73 +1,24 @@
 # XLIFF Translator
 
-A local Windows application for translating XLIFF 1.2 files using Meta's NLLB translation model.
+XLIFF Translator is a local Windows application for translating XLIFF 1.2 files using Meta's NLLB translation model.
 
-XLIFF Translator is designed with a strong focus on **preserving the original XLIFF/XML structure**. It translates textual content while keeping the original source content, element hierarchy, attributes, IDs, and inline elements intact.
+The main focus of the project is preserving the structure of the original XLIFF file while translating its textual content. The application also supports Do Not Translate (DNT) terms, which can be used to protect product names, technical terms, UI labels, or any other text that should remain unchanged.
 
-The application also supports **Do Not Translate (DNT)** terms, allowing specific words, phrases, product names, technical terms, or other content to remain unchanged during translation.
+The project has two main use cases:
 
----
+- A packaged Windows application for end users
+- A Python-based development environment for developers who need to maintain or extend the project
 
-# Part I — Customer / End User
 
-## What is XLIFF Translator?
+# End User
 
-XLIFF Translator allows you to translate XLIFF 1.2 files locally on your Windows computer.
+## What the application does
 
-You provide:
+The application takes an XLIFF 1.2 file, translates its translatable text into the selected target language, and produces a new translated XLIFF file.
 
-* An XLIFF `.xlf` or `.xliff` file
-* One or more target languages
-* Optional Do Not Translate (DNT) terms
+The original input file is not modified.
 
-The application produces translated XLIFF files that preserve the structure of the original file.
-
-Translation is performed locally. The customer does not need to install Python, PyTorch, Git, Hugging Face, or any other development dependency.
-
-## Installation
-
-The customer receives:
-
-```text
-XLIFF-Translator-Setup.exe
-```
-
-Run the installer and follow the installation wizard.
-
-The installer creates the XLIFF Translator application and shortcuts.
-
-After installation, launch **XLIFF Translator** from the Start Menu or desktop shortcut if one was created.
-
-No separate Python installation or command-line setup is required.
-
-## Using the application
-
-After launching XLIFF Translator:
-
-1. Select or drag-and-drop an XLIFF file into the application.
-2. Select the target language or languages.
-3. Enter any DNT terms that must remain unchanged.
-4. Optionally upload a `.txt` DNT list.
-5. Start the translation.
-6. Download or access the generated translated XLIFF files.
-
-The application handles the translation and XLIFF reconstruction automatically.
-
-The underlying local server and translation model are implementation details and do not require customer configuration.
-
-## Supported languages
-
-The current application interface provides:
-
-* French
-* German
-* English
-
-The translation engine is based on NLLB and the application architecture supports language-specific translation codes.
-
-## Do Not Translate (DNT)
-
-DNT terms are words or phrases that must not be translated.
+The application also allows specific terms to be protected from translation using DNT (Do Not Translate) terms.
 
 For example:
 
@@ -78,25 +29,88 @@ RFLP
 True
 False
 Congratulations!
+````
+
+Each term is entered on a separate line.
+
+## Installation
+
+The customer receives the following installer:
+
+```text
+XLIFF-Translator-Setup.exe
 ```
 
-Enter one term per line.
+Run the installer and follow the installation steps.
 
-Blank lines are ignored.
+After installation, XLIFF Translator can be launched from the Start Menu or from the desktop shortcut if one was created during installation.
 
-For example, if:
+The customer does not need to install or configure:
+
+* Python
+* pip
+* Git
+* PyTorch
+* Hugging Face
+* FastAPI
+* Uvicorn
+* The NLLB model
+
+The required translation model is bundled with the application.
+
+## Using the application
+
+After starting XLIFF Translator:
+
+1. Select an XLIFF file or drag and drop one into the application.
+2. Select the required target language.
+3. Enter any DNT terms that should remain unchanged.
+4. Optionally upload a `.txt` file containing DNT terms.
+5. Start the translation.
+6. Download or access the generated translated XLIFF file.
+
+The translation and XLIFF reconstruction are handled automatically by the application.
+
+## Supported input
+
+The current application is designed for XLIFF 1.2 files.
+
+Supported file extensions:
+
+```text
+.xlf
+.xliff
+```
+
+The input file should be a valid XLIFF 1.2 document.
+
+## Supported target languages
+
+The current GUI provides:
+
+* English
+* French
+* German
+
+The translation engine uses the corresponding NLLB language codes internally.
+
+## Do Not Translate (DNT)
+
+DNT terms are terms that must not be translated.
+
+For example, if the following term is protected:
 
 ```text
 Congratulations!
 ```
 
-is protected, the following source:
+and the source text is:
 
 ```text
 Congratulations! You have completed this lesson.
 ```
 
-can produce:
+the translated result can be:
 
 ```text
 Congratulations! Vous avez terminé cette leçon.
@@ -104,13 +118,13 @@ Congratulations! Vous avez terminé cette leçon.
 
 The surrounding sentence is translated while the protected term is restored unchanged.
 
-DNT matching is designed to protect the specified terms without unnecessarily protecting similar text inside other words.
+DNT matching is boundary-aware, so a protected term is not unnecessarily matched as part of another word.
 
-If a protected term cannot be safely preserved, the application fails the translation rather than silently changing the protected term.
+If a protected term cannot be safely preserved, the translation fails instead of silently changing the protected term.
 
-## DNT `.txt` files
+## DNT text file
 
-Instead of entering DNT terms manually, you can provide a plain-text `.txt` file.
+DNT terms can also be provided through a plain-text `.txt` file.
 
 Example:
 
@@ -124,13 +138,15 @@ Logical connections
 Congratulations!
 ```
 
-Use one term per line.
+Use one term per line. Blank lines are ignored.
 
-The application combines the uploaded DNT terms with terms entered directly in the interface.
+Terms entered directly in the GUI and terms provided through the `.txt` file are combined.
 
 ## Output files
 
-Translated files are stored under the user's Documents directory:
+Translated files are stored under the user's Documents directory.
+
+The application uses the following general structure:
 
 ```text
 Documents\
@@ -140,35 +156,33 @@ Documents\
             └── translated-file.fra_Latn.xlf
 ```
 
-The exact output filename and language code depend on the input file and selected target language.
+The exact filename and language code depend on the input file and selected target language.
 
-The original input file is not modified.
+The original input file is never overwritten.
 
 ## Local processing
 
-XLIFF translation is performed locally by the installed application.
+Translation is performed locally on the customer's machine.
 
-The customer does not need to configure:
+The NLLB model used by the customer build is:
 
-* Python
-* pip
-* Git
-* Hugging Face
-* PyTorch
-* FastAPI
-* Uvicorn
-* A local server
-* A model download
+```text
+facebook/nllb-200-distilled-600M
+```
 
-The required NLLB model is bundled with the customer application.
+The model is bundled with the Windows application, so the customer does not need an internet connection to download the model or configure a Hugging Face account.
 
-## XLIFF/XML preservation
+The application can run using the CPU. The development version also supports NVIDIA CUDA when a compatible PyTorch/CUDA environment is available.
 
-XLIFF Translator does not translate or modify the original `<source>` content.
+## XLIFF and XML preservation
 
-The target is constructed from the source structure and only the textual values are replaced with translated text.
+Preserving the XLIFF structure is one of the main design requirements of the project.
 
-The following are preserved structurally:
+The original `<source>` elements are not modified.
+
+For translated content, the application creates the target from the source structure and replaces only the textual values that need to be translated.
+
+The following are preserved:
 
 * XML element hierarchy
 * Element names
@@ -178,59 +192,15 @@ The following are preserved structurally:
 * Element ordering
 * Original source content
 
-The application validates the reconstructed XLIFF structure before producing the final output.
+The reconstructed document is validated before the translated file is written.
 
-The application does not promise byte-for-byte preservation of the original XML serialization. XML serialization may normalize insignificant formatting such as whitespace.
+The application does not guarantee byte-for-byte preservation of the original XML file. XML serialization can normalize insignificant formatting such as whitespace.
 
-## Important limitation
+# Developer Documentation
 
-The application currently focuses on **XLIFF 1.2**.
+## Project structure
 
-The customer should provide valid XLIFF 1.2 files.
-
----
-
-# Part II — Developer Documentation
-
-## Architecture
-
-The project consists of several layers:
-
-```text
-XLIFF file
-    │
-    ▼
-XLIFF parser / structural analysis
-    │
-    ▼
-Text extraction
-    │
-    ▼
-DNT protection
-    │
-    ▼
-NLLB translation
-    │
-    ▼
-DNT restoration
-    │
-    ▼
-Target reconstruction
-    │
-    ▼
-Structural validation
-    │
-    ▼
-Translated XLIFF
-```
-
-The core design principle is:
-
-> **Translate textual content without changing the structural representation of the XLIFF document.**
-
-The original `<source>` content is treated as immutable.
-
-## Developer project structure
+The repository is organized as follows:
 
 ```text
 xliff_translator/
@@ -244,8 +214,8 @@ xliff_translator/
 ├── tests/
 │   ├── fixture.xlf
 │   ├── test_dnt.py
-│   ├── test_reconstruction.py
-│   └── ...
+│   ├── test_dnt_integration.py
+│   └── test_reconstruction.py
 │
 ├── packaging/
 │   ├── xliff_translator.spec
@@ -267,30 +237,29 @@ xliff_translator/
     └── web/
         ├── __init__.py
         ├── app.py
-        │
         └── static/
             ├── index.html
             ├── app.js
             └── style.css
 ```
 
-## Core modules
+## Main modules
 
 ### `core.py`
 
-Responsible for the XLIFF/XML side of the application.
+Handles the XLIFF/XML processing.
 
-Its responsibilities include:
+It is responsible for:
 
-* Parsing XLIFF
+* Parsing XLIFF files
 * Extracting translatable text
-* Preserving inline XML elements
-* Reconstructing target content
-* Replacing or creating `<target>` elements
+* Preserving inline elements
+* Reconstructing translated target content
+* Creating or replacing `<target>` elements
 * Validating the reconstructed document
-* Writing the resulting XLIFF
+* Writing the resulting XLIFF file
 
-The core module is intentionally independent of the NLLB model.
+The core XLIFF processing code does not depend directly on the NLLB model.
 
 ### `dnt.py`
 
@@ -298,18 +267,20 @@ Contains the Do Not Translate implementation.
 
 It handles:
 
-* DNT term loading
-* Manual DNT terms
-* `.txt` DNT lists
-* Term matching
+* Loading DNT terms
+* Terms entered manually
+* DNT `.txt` files
 * Boundary-aware matching
-* Longest-term-first processing
+* Longest-term-first matching
+* Protection of terms before translation
 
-DNT terms are treated as protected text and must be restored exactly after translation.
+DNT terms are protected before being passed to the translation model and restored after translation.
+
+Protected terms must be restored exactly.
 
 ### `nllb.py`
 
-Contains the NLLB translation engine.
+Contains the NLLB translation implementation.
 
 The current customer build uses:
 
@@ -319,57 +290,45 @@ facebook/nllb-200-distilled-600M
 
 The model supports CPU and NVIDIA CUDA execution.
 
-The translation implementation also handles the possibility that the translation model modifies whitespace inside protected placeholders. Placeholder detection therefore has additional normalization logic so that protected DNT terms can still be restored correctly.
+The DNT implementation uses placeholders when protected terms are sent through NLLB. NLLB can sometimes modify whitespace around or inside these placeholders, so the placeholder handling includes additional logic to recognize these cases and restore the original DNT term correctly.
 
 ### `pipeline.py`
 
-Coordinates the complete translation workflow.
+Coordinates the translation process.
 
-Conceptually:
+It connects the XLIFF processing, DNT handling, and NLLB translation components.
 
-```text
-XLIFF
-  ↓
-Extract text
-  ↓
-Apply DNT protection
-  ↓
-Translate with NLLB
-  ↓
-Restore DNT
-  ↓
-Reconstruct target
-  ↓
-Validate
-  ↓
-Write XLIFF
-```
+The general sequence is:
 
-This is the main integration layer between the XLIFF engine and translation engine.
+1. Read the XLIFF file.
+2. Extract the translatable text.
+3. Protect DNT terms.
+4. Translate the text using NLLB.
+5. Restore the DNT terms.
+6. Reconstruct the target content.
+7. Validate the reconstructed XLIFF.
+8. Write the translated file.
 
 ### `web/app.py`
 
-Contains the FastAPI application used by the GUI.
+Contains the FastAPI backend used by the GUI.
 
 It handles:
 
 * XLIFF uploads
 * DNT input
 * DNT `.txt` uploads
-* Target-language selection
+* Target language selection
 * Translation requests
-* Job/output management
-* Downloading translated files
+* Translation jobs
+* Output files
+* File downloads
 
-In the customer build, the application also resolves the bundled NLLB model and stores customer-generated data under:
-
-```text
-Documents\XLIFF Translator
-```
+For the packaged customer build, it also resolves the bundled NLLB model and uses the customer's Documents directory for generated application data.
 
 ### `web/static/`
 
-Contains the frontend:
+Contains the frontend files:
 
 ```text
 index.html
@@ -377,32 +336,33 @@ app.js
 style.css
 ```
 
-The frontend communicates with the FastAPI backend running locally.
+The frontend communicates with the local FastAPI application.
 
 ### `desktop.py`
 
-This is the customer application launcher.
+This is the entry point used by the packaged Windows application.
 
-It hides the development infrastructure from the customer.
+It starts the local application automatically and opens the GUI in an application-style browser window.
 
-At runtime it:
+The launcher:
 
-1. Starts the local FastAPI/Uvicorn application.
-2. Finds an available local port.
-3. Waits for the server to become ready.
-4. Finds Microsoft Edge or Google Chrome.
-5. Opens the application in application-window mode.
-6. Uses a dedicated browser profile.
-7. Waits for the application window to close.
-8. Shuts down the local server.
+* Finds an available local port
+* Starts the FastAPI/Uvicorn server
+* Waits for the server to become available
+* Finds Microsoft Edge or Google Chrome
+* Opens the application in application-window mode
+* Uses a dedicated browser profile
+* Shuts down the local server when the application window is closed
 
-The customer therefore interacts with what appears to be a normal desktop application rather than manually starting a web server.
+This launcher is mainly part of the customer packaging workflow. Developers can run the FastAPI application directly during development.
 
-## Developer setup
+# Development Setup
 
-The developer environment uses Python.
+## Python environment
 
-Create a virtual environment:
+The project requires Python 3.10 or newer.
+
+Create a virtual environment from the project root:
 
 ```powershell
 python -m venv .venv
@@ -414,137 +374,34 @@ Activate it:
 .\.venv\Scripts\Activate.ps1
 ```
 
-Install dependencies:
+Install the project dependencies:
 
 ```powershell
 pip install -r requirements.txt
 ```
 
-The NLLB model can be downloaded for development when required.
+The main runtime dependencies include:
 
-The default development model is:
+* lxml
+* PyTorch
+* Transformers
+* SentencePiece
+* Safetensors
+* FastAPI
+* Uvicorn
+* python-multipart
+
+## NLLB model
+
+The default model is:
 
 ```text
 facebook/nllb-200-distilled-600M
 ```
 
-## Running the development GUI
+During development, the model can be downloaded from Hugging Face when required.
 
-From the project root:
-
-```powershell
-python -m uvicorn xliff_translator.web.app:app --reload
-```
-
-The development GUI is available at:
-
-```text
-http://127.0.0.1:8000
-```
-
-This development workflow is different from the customer workflow.
-
-The customer does **not** run Uvicorn manually.
-
-## Command-line interface
-
-The CLI remains available as a developer utility.
-
-Inspect an XLIFF file without loading the translation model:
-
-```powershell
-python -m xliff_translator inspect input.xlf
-```
-
-Translate:
-
-```powershell
-python -m xliff_translator translate input.xlf --langs fr,de --output-dir output
-```
-
-Use CUDA:
-
-```powershell
-python -m xliff_translator translate input.xlf --langs fr --device cuda --output-dir output
-```
-
-Use CPU:
-
-```powershell
-python -m xliff_translator translate input.xlf --langs fr --device cpu --output-dir output
-```
-
-Specify the model:
-
-```powershell
-python -m xliff_translator translate input.xlf --langs fr --model facebook/nllb-200-distilled-600M --output-dir output
-```
-
-## GPU development check
-
-Check the NVIDIA driver and GPU:
-
-```powershell
-nvidia-smi
-```
-
-Check whether PyTorch can access CUDA:
-
-```powershell
-python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
-```
-
-CUDA is optional. The application can run on CPU.
-
-## Testing
-
-Run the complete test suite:
-
-```powershell
-python -m pytest -q
-```
-
-The tests cover areas including:
-
-* DNT behavior
-* DNT preservation
-* XLIFF reconstruction
-* Structural preservation
-* Translation pipeline behavior
-
-Tests should be run before creating a customer release.
-
-## Packaging architecture
-
-The customer build uses PyInstaller.
-
-The packaging flow is:
-
-```text
-Source code
-    +
-NLLB 600M model
-    │
-    ▼
-PyInstaller
-    │
-    ▼
-Standalone Windows application
-    │
-    ▼
-Inno Setup
-    │
-    ▼
-XLIFF-Translator-Setup.exe
-```
-
-The PyInstaller build bundles the application dependencies and the NLLB model.
-
-The customer therefore does not need Python or the model separately.
-
-## Bundled model
-
-The packaging model is stored at:
+For the customer build, the model is downloaded into:
 
 ```text
 packaging\
@@ -552,45 +409,104 @@ packaging\
     └── nllb-200-distilled-600M\
 ```
 
-The model must contain the required model and tokenizer files, including:
+and bundled into the packaged application.
 
-```text
-config.json
-pytorch_model.bin
-sentencepiece.bpe.model
-```
+## Running the development GUI
 
-The build script validates these files before creating the executable.
-
-The model is intentionally bundled rather than downloaded by the customer.
-
-## Building the customer application
-
-The main build script is:
-
-```text
-packaging\build.ps1
-```
-
-Run it from PowerShell:
+The development GUI can be started from the project root using:
 
 ```powershell
-.\packaging\build.ps1
+python -m uvicorn xliff_translator.web.app:app --reload
 ```
 
-The script:
+Open the following address in a browser:
 
-1. Locates the developer virtual environment.
-2. Installs project dependencies.
-3. Installs the packaging dependencies.
-4. Downloads the NLLB model if it is missing or incomplete.
-5. Validates the model.
-6. Removes previous PyInstaller build artifacts.
-7. Runs PyInstaller.
-8. Validates that the model was actually bundled.
-9. Reports the final application location.
+```text
+http://127.0.0.1:8000
+```
 
-The resulting customer application is:
+This is the development workflow only.
+
+The customer does not start Uvicorn manually. The packaged application starts the local server through `desktop.py`.
+
+# Command-Line Interface
+
+The CLI is still available as a developer utility.
+
+## Inspect an XLIFF file
+
+The `inspect` command can be used without loading the translation model:
+
+```powershell
+python -m xliff_translator inspect input.xlf
+```
+
+## Translate using the CLI
+
+```powershell
+python -m xliff_translator translate input.xlf --langs fr,de --output-dir output
+```
+
+## Use CPU
+
+```powershell
+python -m xliff_translator translate input.xlf --langs fr --device cpu --output-dir output
+```
+
+## Use CUDA
+
+```powershell
+python -m xliff_translator translate input.xlf --langs fr --device cuda --output-dir output
+```
+
+## Specify a model
+
+```powershell
+python -m xliff_translator translate input.xlf --langs fr --model facebook/nllb-200-distilled-600M --output-dir output
+```
+
+# GPU Development
+
+CUDA is optional. The application can run entirely on CPU.
+
+To check the installed NVIDIA driver and GPU:
+
+```powershell
+nvidia-smi
+```
+
+To check whether PyTorch can access CUDA:
+
+```powershell
+python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+```
+
+# Testing
+
+Run the test suite from the project root:
+
+```powershell
+python -m pytest -q
+```
+
+The tests cover the main areas of the application, including:
+
+* DNT matching
+* DNT protection and restoration
+* DNT integration with translation
+* XLIFF reconstruction
+* XML structure preservation
+* Translation pipeline behavior
+
+Tests should be run before creating a customer build.
+
+# Packaging
+
+The customer application is built in two stages.
+
+First, PyInstaller creates the standalone Windows application. The bundled application contains the Python runtime, required dependencies, application code, and NLLB model.
+
+The resulting application is placed under:
 
 ```text
 dist\
@@ -601,11 +517,71 @@ dist\
             └── nllb-200-distilled-600M\
 ```
 
-The `_internal` directory is part of the packaged application and should not be manually modified.
+The second stage uses Inno Setup to create the installer that is distributed to customers.
+
+## Bundled model
+
+The model used for the customer build is stored in:
+
+```text
+packaging\
+└── model\
+    └── nllb-200-distilled-600M\
+```
+
+The build script checks that the required model files exist before packaging.
+
+At minimum, the model directory must contain:
+
+```text
+config.json
+pytorch_model.bin
+sentencepiece.bpe.model
+```
+
+Other tokenizer and model files required by Transformers are also included when the model is downloaded.
+
+The model directory is ignored by Git because it is a large generated build dependency.
+
+## Building the Windows application
+
+The main build script is:
+
+```text
+packaging\build.ps1
+```
+
+Run it from the project root:
+
+```powershell
+.\packaging\build.ps1
+```
+
+The script handles the complete PyInstaller build process.
+
+It:
+
+1. Checks for the developer virtual environment.
+2. Installs the project requirements.
+3. Installs the packaging dependencies.
+4. Downloads the NLLB model if it is missing or incomplete.
+5. Validates the model files.
+6. Removes previous PyInstaller output.
+7. Runs PyInstaller using the project spec file.
+8. Checks that the executable was created.
+9. Checks that the NLLB model was bundled correctly.
+
+The resulting executable is:
+
+```text
+dist\XLIFF Translator\XLIFF Translator.exe
+```
+
+The `_internal` directory should be treated as part of the packaged application and should not be manually edited.
 
 ## Building the installer
 
-After a successful PyInstaller build, compile:
+After successfully building the application, compile:
 
 ```text
 packaging\installer.iss
@@ -613,7 +589,7 @@ packaging\installer.iss
 
 using Inno Setup.
 
-The resulting installer is:
+The installer is generated at:
 
 ```text
 packaging\
@@ -623,5 +599,56 @@ packaging\
 
 This is the file intended for customer distribution.
 
-The installer packages the PyInstaller application, including its `_internal` runtime and bundled model.
+The installer includes the PyInstaller application and its bundled runtime/model.
+
+# Customer Data and Installed Files
+
+The installed application and customer-generated data are kept separate.
+
+The application itself is installed through the Windows installer.
+
+Generated customer data is stored under:
+
+```text
+Documents\
+└── XLIFF Translator\
+```
+
+This includes translated output files and other application-generated data.
+
+This separation avoids relying on write permissions inside the application's installation directory.
+
+# Git and Generated Files
+
+The following directories and files are generated locally and should not normally be committed:
+
+```text
+.venv/
+__pycache__/
+.pytest_cache/
+build/
+dist/
+packaging/installer-output/
+packaging/model/
+web_data/
+output/
+outputs/
+logs/
+*.log
+```
+
+The `.gitignore` file already excludes these generated files and directories.
+
+# Important Development Notes
+
+The XLIFF structure and DNT behavior are core requirements of the project.
+
+Changes to the following files should therefore be made carefully:
+
+```text
+core.py
+dnt.py
+nllb.py
+pipeline.py
+```
 
